@@ -1,0 +1,45 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Session {
+  id           String             @id @default(uuid())
+  url          String
+  description  String
+  prompt       String?
+  mode         String             @default("analysis") // "analysis" | "task"
+  status       String             // "pending", "running", "completed", "failed"
+  error        String?
+  createdAt    DateTime           @default(now())
+  completedAt  DateTime?
+  events       InteractionEvent[]
+  report       Report?
+}
+
+model InteractionEvent {
+  id            String   @id @default(uuid())
+  sessionId     String
+  session       Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  timestamp     Float    // offset seconds
+  action        String   // "navigate", "click", "type", "scroll", "wait", "done"
+  target        String?  // element description
+  reasoning     String?  // live thoughts
+  screenshotUrl String?  // base64 or file path
+  createdAt     DateTime @default(now())
+}
+
+model Report {
+  id             String   @id @default(uuid())
+  sessionId      String   @unique
+  session        Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  summary        String
+  whatWorkedWell String   // JSON string of array
+  frictionPoints String   // JSON string of array
+  improvements   String   // JSON string of array
+  createdAt      DateTime @default(now())
+}

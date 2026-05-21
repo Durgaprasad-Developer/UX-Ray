@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #09090B;
+  --foreground: #FAFAFA;
+}
+
+body {
+  background-color: #09090B;
+  color: #FAFAFA;
+  font-family: var(--font-jetbrains-mono), monospace;
+}
+
+h1, h2, h3, h4, h5, h6, .font-sans-display {
+  font-family: var(--font-syne), sans-serif !important;
+  letter-spacing: -0.03em;
+}
