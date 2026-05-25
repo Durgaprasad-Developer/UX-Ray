@@ -252,18 +252,6 @@ export default function SessionReplay() {
             </button>
           </div>
           
-          {activeTab === "report" && status === "completed" && (
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(window.location.href);
-                alert("Report link copied to clipboard!");
-              }}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-all cursor-pointer border border-zinc-700"
-            >
-              <Share2 className="w-4 h-4" />
-              Share Report
-            </button>
-          )}
         </div>
       </header>
 
@@ -480,6 +468,19 @@ export default function SessionReplay() {
                         <blockquote className="border-l-2 border-purple-500/40 pl-4 text-sm text-zinc-300 italic leading-relaxed">
                           &ldquo;{report.experienceScore.verdict}&rdquo;
                         </blockquote>
+                        
+                        <div className="mt-6 flex justify-end">
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(window.location.href);
+                              alert("Report link copied to clipboard!");
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold bg-purple-600 text-white hover:bg-purple-500 transition-all cursor-pointer shadow-lg shadow-purple-900/20"
+                          >
+                            <Share2 className="w-4 h-4" />
+                            Share report to team
+                          </button>
+                        </div>
                       </div>
                     )}
 
@@ -513,7 +514,6 @@ export default function SessionReplay() {
                                   <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">{item.area}</span>
                                 </div>
                                 <p className="text-xs text-white font-semibold mb-1 leading-relaxed">{item.fix}</p>
-                                <p className="text-[11px] text-zinc-500 italic">{item.impact}</p>
                               </div>
                             </div>
                           );
@@ -526,10 +526,9 @@ export default function SessionReplay() {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {report.behaviourPatterns && report.behaviourPatterns.length > 0 && (
                           <div className="p-5 rounded-xl border border-cyan-950/30 bg-cyan-950/10 flex flex-col gap-3">
-                            <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-2">
+                            <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-2 mb-2">
                               <Eye className="w-4 h-4" />User Behaviour Patterns
                             </h4>
-                            <p className="text-[10px] text-zinc-500 -mt-1">What users naturally try to do — even things the app doesn&apos;t support yet.</p>
                             <ul className="flex flex-col gap-2">
                               {report.behaviourPatterns.map((b, i) => (
                                 <li key={i} className="text-xs text-zinc-400 flex items-start gap-2 leading-relaxed">
@@ -541,10 +540,9 @@ export default function SessionReplay() {
                         )}
                         {report.featureSuggestions && report.featureSuggestions.length > 0 && (
                           <div className="p-5 rounded-xl border border-purple-950/30 bg-purple-950/10 flex flex-col gap-3">
-                            <h4 className="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-2">
+                            <h4 className="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-2 mb-2">
                               <Sparkles className="w-4 h-4" />Feature Opportunities
                             </h4>
-                            <p className="text-[10px] text-zinc-500 -mt-1">Features users clearly wanted but your app doesn&apos;t have yet.</p>
                             <ul className="flex flex-col gap-2">
                               {report.featureSuggestions.map((f, i) => (
                                 <li key={i} className="text-xs text-zinc-400 flex items-start gap-2 leading-relaxed">

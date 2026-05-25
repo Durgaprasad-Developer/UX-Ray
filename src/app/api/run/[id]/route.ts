@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { BrowserSimulator } from "@/lib/playwright";
-import { buildDeterministicPagePlan, recognizeApp, AppProfile, QueueItem } from "@/lib/ai";
+import { getAgentDecision, recognizeApp, AppProfile, QueueItem } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
 
@@ -74,49 +74,55 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         });
         send("event", { id: landingEvent.id, timestamp: 0, action: "navigate", target: landingEvent.target, reasoning: landingEvent.reasoning, screenshotUrl: landingEvent.screenshotUrl });
 
-        // ── Phase 2: Queue-based page exploration ─────────────────────────────
+        // ── Phase 2: Autonomous Agentic Exploration ─────────────────────────────
         let isDone = false;
-        let currentQueue: QueueItem[] = [];
         let lastBuiltForUrl = "";
 
         while (!isDone && totalSteps < MAX_TOTAL_STEPS && pagesVisited < MAX_PAGES) {
           const currentUrl = await simulator.getCurrentUrl();
 
-          // Rebuild plan when: queue empty OR page changed
-          if (currentQueue.length === 0 || currentUrl !== lastBuiltForUrl) {
-            if (currentUrl !== lastBuiltForUrl) {
-              pagesVisited++;
-              send("log", { message: `📄 Now testing: ${currentUrl}` });
-              visitedUrls.push(currentUrl);
-            }
-
-            try {
-              const scan = await simulator.getPageScan();
-              const history = await prisma.interactionEvent.findMany({
-                where: { sessionId: session.id },
-                orderBy: { timestamp: "asc" },
-                select: { action: true, target: true },
-              });
-
-              send("log", { message: `🧠 Planning: found ${scan.forms.length} form(s), ${scan.tabGroups.length} tab group(s), ${scan.primaryCTAIds.length} CTA(s)` });
-
-              currentQueue = await buildDeterministicPagePlan({
-                scan,
-                appProfile: appProfile!,
-              });
-
-              send("log", { message: `📋 Plan: ${currentQueue.length} actions queued` });
-              lastBuiltForUrl = currentUrl;
-            } catch (planErr: any) {
-              send("log", { message: `Plan build error: ${planErr.message}. Skipping page.` });
-              isDone = true;
-              break;
-            }
+          if (currentUrl !== lastBuiltForUrl) {
+            pagesVisited++;
+            send("log", { message: `📄 Now testing: ${currentUrl}` });
+            if (!visitedUrls.includes(currentUrl)) visitedUrls.push(currentUrl);
+            lastBuiltForUrl = currentUrl;
           }
 
-          if (currentQueue.length === 0) { isDone = true; break; }
+          let decision: { thought: string; action: QueueItem } | null = null;
 
-          const item = currentQueue.shift()!;
+          let scan: import("@/lib/playwright").PageScan | null = null;
+          try {
+            scan = await simulator.getPageScan();
+            const history = await prisma.interactionEvent.findMany({
+              where: { sessionId: session.id },
+              orderBy: { timestamp: "asc" },
+              select: { action: true, target: true },
+            });
+
+            send("log", { message: `🧠 Thinking...` });
+
+            decision = await getAgentDecision({
+              scan,
+              appProfile: appProfile!,
+              history: history.map(h => ({ action: h.action, target: h.target || undefined })),
+              visitedUrls,
+            });
+
+            if (decision.thought) {
+              send("thought", decision.thought);
+            }
+          } catch (planErr: any) {
+            send("log", { message: `Decision error: ${planErr.message}. Skipping page.` });
+            isDone = true;
+            break;
+          }
+
+          if (!decision || !decision.action) {
+            isDone = true;
+            break;
+          }
+
+          const item = decision.action;
 
           // Handle done
           if (item.type === "done") {
@@ -130,7 +136,6 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
                 send("log", { message: `🔗 Moving to: ${fullUrl}` });
                 await simulator.navigate(fullUrl);
                 lastBuiltForUrl = ""; // force rebuild
-                currentQueue = [];
                 continue;
               } catch {}
             }
@@ -145,15 +150,25 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
           // Execute queue item
           let targetText = "";
           let actionName = item.type;
+          
+          let elInfo = "";
+          if ("elementId" in item && item.elementId && decision && scan) {
+             const elId = item.elementId;
+             const el = scan.elements.find(e => e.id === elId);
+             if (el) elInfo = el.placeholder || el.name || el.tag || String(elId);
+          }
 
           try {
-            if (item.type === "type" && item.elementId) {
-              targetText = await simulator.type(item.elementId, item.value);
-            } else if (item.type === "typeOnly" && item.elementId) {
-              targetText = await simulator.typeOnly(item.elementId, item.value);
+            if (item.type === "type" && "elementId" in item && "value" in item) {
+              const val = await simulator.type(item.elementId, item.value);
+              targetText = `[${elInfo}] <- "${val}"`;
+            } else if (item.type === "typeOnly" && "elementId" in item && "value" in item) {
+              const val = await simulator.typeOnly(item.elementId, item.value);
+              targetText = `[${elInfo}] <- "${val}"`;
               actionName = "type";
-            } else if (item.type === "click" && item.elementId) {
-              targetText = await simulator.click(item.elementId);
+            } else if (item.type === "click" && "elementId" in item) {
+              const val = await simulator.click(item.elementId);
+              targetText = `[${elInfo}] ${val}`;
             } else if (item.type === "wait") {
               targetText = await simulator.wait();
             } else if (item.type === "scroll") {
@@ -161,12 +176,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
             }
           } catch (actionErr: any) {
             console.warn(`[Step ${totalSteps}] Action error (non-fatal): ${actionErr.message}`);
-            targetText = `(element not found — minor simulation issue)`;
+            targetText = `[${elInfo || "unknown"}] (element not found or intractable)`;
           }
 
           const screenshot = await simulator.screenshotBase64();
           const offsetSeconds = Math.round((Date.now() - startTime) / 1000);
-          const purpose = (item as any).purpose || "";
+          const purpose = (item as any).purpose || decision!.thought;
 
           const event = await prisma.interactionEvent.create({
             data: {
@@ -184,7 +199,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
             target: event.target, reasoning: event.reasoning, screenshotUrl: event.screenshotUrl,
           });
 
-          await new Promise(r => setTimeout(r, 600));
+          await new Promise(r => setTimeout(r, 800));
         }
 
         // ── Wrap up ───────────────────────────────────────────────────────────

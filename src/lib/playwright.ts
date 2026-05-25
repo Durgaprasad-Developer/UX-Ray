@@ -86,9 +86,12 @@ export class BrowserSimulator {
         // Get form purpose from legend, fieldset label, aria-label, or nearest heading
         const purposeEl =
           form.querySelector("legend, [aria-label], label") ||
-          form.closest("section, article, div")?.querySelector("h1,h2,h3,h4");
-        const purpose =
-          (purposeEl as HTMLElement)?.textContent?.trim().slice(0, 60) || "form";
+          (form.closest("section, article, div") ? form.closest("section, article, div")!.querySelector("h1,h2,h3,h4") : null);
+        let purposeText = "";
+        if (purposeEl) {
+          purposeText = (purposeEl as HTMLElement).textContent ? (purposeEl as HTMLElement).textContent!.trim().slice(0, 60) : "";
+        }
+        const purpose = purposeText || "form";
 
         if (inputIds.length > 0) {
           forms.push({ purpose, inputIds, submitId });
@@ -199,6 +202,7 @@ export class BrowserSimulator {
             ? `[IFRAME] ${el.getAttribute("title") || "Embedded"}`
             : el.innerText || (el as HTMLInputElement).value || el.textContent || "";
         let text = rawText.trim().slice(0, 60);
+        const rect = el.getBoundingClientRect();
         list.push({
           id: currentId++,
           tag: el.tagName.toLowerCase(),
@@ -207,6 +211,11 @@ export class BrowserSimulator {
           placeholder: el.getAttribute("placeholder") || undefined,
           name: el.getAttribute("name") || el.id || undefined,
           role: el.getAttribute("role") || undefined,
+          ariaLabel: el.getAttribute("aria-label") || undefined,
+          disabled: (el as HTMLInputElement).disabled || el.getAttribute("aria-disabled") === "true",
+          href: el.getAttribute("href") || undefined,
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
         });
       });
 
@@ -244,7 +253,7 @@ export class BrowserSimulator {
       }
       if (!hasLoader) {
         const phrases = ["analyzing","fetching","generating","processing","loading","please wait","scanning"];
-        for (const node of document.querySelectorAll("p,span,div,h1,h2,h3")) {
+        for (const node of Array.from(document.querySelectorAll("p,span,div,h1,h2,h3"))) {
           const el = node as HTMLElement;
           const r = el.getBoundingClientRect();
           const s = window.getComputedStyle(el);
@@ -267,13 +276,13 @@ export class BrowserSimulator {
       const p: string[] = [];
       const title = document.title;
       if (title) p.push(`TITLE: ${title}`);
-      const h1s = Array.from(document.querySelectorAll("h1")).map(h => h.textContent?.trim()).filter(Boolean);
+      const h1s = Array.from(document.querySelectorAll("h1")).map(h => h.textContent ? h.textContent.trim() : "").filter(Boolean);
       if (h1s.length) p.push(`H1: ${h1s.join(" | ")}`);
-      const h2s = Array.from(document.querySelectorAll("h2")).slice(0, 6).map(h => h.textContent?.trim()).filter(Boolean);
+      const h2s = Array.from(document.querySelectorAll("h2")).slice(0, 6).map(h => h.textContent ? h.textContent.trim() : "").filter(Boolean);
       if (h2s.length) p.push(`H2: ${h2s.join(" | ")}`);
-      const nav = Array.from(document.querySelectorAll("nav a, header a")).slice(0, 12).map(a => (a as HTMLElement).textContent?.trim()).filter(Boolean);
+      const nav = Array.from(document.querySelectorAll("nav a, header a")).slice(0, 12).map(a => (a as HTMLElement).textContent ? (a as HTMLElement).textContent!.trim() : "").filter(Boolean);
       if (nav.length) p.push(`NAV: ${nav.join(", ")}`);
-      const btns = Array.from(document.querySelectorAll("button, [role=button]")).slice(0, 8).map(b => (b as HTMLElement).textContent?.trim()).filter(Boolean);
+      const btns = Array.from(document.querySelectorAll("button, [role=button]")).slice(0, 8).map(b => (b as HTMLElement).textContent ? (b as HTMLElement).textContent!.trim() : "").filter(Boolean);
       if (btns.length) p.push(`BUTTONS: ${btns.join(", ")}`);
       const inputs = Array.from(document.querySelectorAll("input, textarea")).slice(0, 6).map(i => { const e = i as HTMLInputElement; return e.placeholder || e.getAttribute("aria-label") || e.name || e.type; }).filter(Boolean);
       if (inputs.length) p.push(`INPUTS: ${inputs.join(", ")}`);
@@ -295,12 +304,27 @@ export class BrowserSimulator {
     }, id);
   }
 
+  private async waitForLoaders(maxSeconds = 15) {
+    if (!this.page) return;
+    let elapsed = 0;
+    while (elapsed < maxSeconds) {
+      const state = await this.getPageState();
+      if (!state.isLoaded || state.hasLoader) {
+        await this.page.waitForTimeout(1000);
+        elapsed++;
+      } else {
+        break;
+      }
+    }
+  }
+
   async click(id: number): Promise<string> {
     if (!this.page) throw new Error("Browser not initialized.");
     const coords = await this.getFreshCoords(id);
     if (!coords) throw new Error(`Element ${id} not found.`);
     await this.page.mouse.click(coords.x, coords.y);
-    await this.page.waitForTimeout(1500);
+    await this.waitForLoaders();
+    await this.page.waitForTimeout(800);
     return this.elementsMap.get(id)?.text || "element clicked";
   }
 
@@ -315,6 +339,7 @@ export class BrowserSimulator {
     await this.page.keyboard.up("ControlOrMeta");
     await this.page.keyboard.press("Backspace");
     await this.page.keyboard.type(text, { delay: 40 });
+    await this.waitForLoaders();
     await this.page.waitForTimeout(500);
     return `${this.elementsMap.get(id)?.text || "input"} ← "${text}"`;
   }
@@ -331,6 +356,7 @@ export class BrowserSimulator {
     await this.page.keyboard.up("ControlOrMeta");
     await this.page.keyboard.press("Backspace");
     await this.page.keyboard.type(text, { delay: 40 });
+    await this.waitForLoaders();
     await this.page.waitForTimeout(300);
     return `${this.elementsMap.get(id)?.text || "input"} ← "${text}"`;
   }

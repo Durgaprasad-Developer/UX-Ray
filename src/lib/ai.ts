@@ -15,6 +15,11 @@ export interface DomElement {
   placeholder?: string;
   name?: string;
   role?: string;
+  ariaLabel?: string;
+  disabled?: boolean;
+  href?: string;
+  width?: number;
+  height?: number;
 }
 
 // Queue item — deterministic action plan built once per page
@@ -196,60 +201,95 @@ export async function recognizeApp(params: { url: string; description: string; p
   }
 }
 
-// ── 2. Queue-based Page Planner (Deterministic Graph/Queue Crawler) ─────────────
-// Called ONCE per page — builds a deterministic action plan to exhaustively click elements
+// ── 2. Deep Agentic Loop ────────────────────────────────────────────────────────
+// Called at every step. The agent observes the LIVE page state, checks history, and picks the SINGLE next best action.
 
-export async function buildDeterministicPagePlan(params: {
+export async function getAgentDecision(params: {
   scan: PageScan;
   appProfile: AppProfile;
-}): Promise<QueueItem[]> {
-  const { scan, appProfile } = params;
-  const plan: QueueItem[] = [];
+  history: Array<{ action: string; target?: string }>;
+  visitedUrls: string[];
+}): Promise<{ thought: string; action: QueueItem }> {
+  const { scan, appProfile, history, visitedUrls } = params;
 
-  // Fill all forms
-  for (const form of scan.forms) {
-    for (const inputId of form.inputIds) {
-      const el = scan.elements.find(e => e.id === inputId);
-      if (el) {
-        plan.push({ type: "typeOnly", elementId: inputId, value: inferSmartTypingValue(el, scan.currentUrl, appProfile), purpose: `fill ${el.placeholder || el.name || "input"}` });
+  const formsText = scan.forms.length > 0
+    ? scan.forms.map((f, i) => `Form ${i + 1} (${f.purpose}): inputs=${JSON.stringify(f.inputIds)}, submit=${f.submitId}`).join("\n")
+    : "No forms detected";
+
+  const tabsText = scan.tabGroups.length > 0
+    ? scan.tabGroups.map(t => `TabGroup (${t.purpose}): tabIds=${JSON.stringify(t.tabIds)}`).join("\n")
+    : "No tab groups detected";
+
+  const historyText = history.slice(-12).map(h => `[${h.action}] ${h.target || "—"}`).join("\n") || "No prior actions";
+
+  const elements = scan.elements.slice(0, 50);
+
+  const system = `You are an autonomous AI QA Agent testing a web app. You act exactly like a meticulous senior developer doing a deep-dive QA session.
+You observe the screen, think about what needs testing, and take ONE ACTION at a time.
+
+App: ${appProfile.appType} | Audience: ${appProfile.audiencePersona}
+Goal: ${appProfile.primaryGoal}
+
+CURRENT PAGE: ${scan.currentUrl}
+${scan.pageText.slice(0, 400)}
+
+PAGE STRUCTURE:
+${formsText}
+${tabsText}
+All visible interactable elements (id, tag, text, spatial & semantic data):
+${JSON.stringify(elements.map(e => ({
+  id: e.id, 
+  tag: e.tag, 
+  t: e.text?.slice(0,40) || e.placeholder?.slice(0,40) || e.ariaLabel?.slice(0,20),
+  w: e.width,
+  h: e.height,
+  href: e.href?.slice(0,30),
+  disabled: e.disabled ? true : undefined
+})))}
+
+RECENT HISTORY (What you just did):
+${historyText}
+
+Visited URLs: ${visitedUrls.join(", ") || "none"}
+
+ALGORITHMIC QA EXPLORATION RULES:
+1. SPATIAL AWARENESS: Use the width (w) and height (h) to deduce visual hierarchy. Large buttons are primary CTAs. Small elements are secondary/tertiary. Focus on testing primary CTAs first.
+2. SEMANTIC AWARENESS: Do not click disabled elements. If an element has an href to a page you've already visited, avoid it unless necessary.
+3. EDGE CASE TESTING: Try to break the UI. Submit forms with edge-case data, or click primary CTAs to see what happens.
+4. STRICT SEQUENCE: If you just filled a form input (type action), your very next action MUST be to click the corresponding submit button or CTA. Do NOT type another value into the same input.
+5. WAIT PATIENCE: If you just clicked a submit button or CTA, your next action MUST be "wait" to let the backend process and the UI update.
+6. STRICT ANTI-LOOP: You MUST NOT repeat an action on the same element you see in your RECENT HISTORY. If you find yourself doing the same thing, choose "navigate" (click a nav link) or return "done".
+7. Return ONLY JSON.
+
+Return format:
+{
+  "thought": "<1 sentence reasoning detailing your QA strategy>",
+  "action": { "type": "type"|"click"|"wait"|"scroll"|"done", "elementId": <number>, "value": "<if type>", "purpose": "<short label>" }
+}
+For "done", action should be: { "type": "done", "summary": "<reason>" }`;
+
+  const user = "Observe the state and history. Decide the single best next action. Return JSON.";
+
+  try {
+    const text = await callNvidia(system, user, 600);
+    const result = JSON.parse(extractJSON(text));
+    if (!result.action || !result.action.type) throw new Error("invalid schema");
+    
+    // If the agent hallucinated a value for a type action but it's empty, try to fix it
+    if (result.action.type === "type" && result.action.elementId) {
+      const el = scan.elements.find(e => e.id === result.action.elementId);
+      if (el && (!result.action.value || result.action.value === "")) {
+        result.action.value = inferSmartTypingValue(el, scan.currentUrl, appProfile);
       }
     }
-    if (form.submitId) {
-      plan.push({ type: "click", elementId: form.submitId, purpose: "submit form" });
-      plan.push({ type: "wait", purpose: "wait for result" });
-    }
+    
+    return result;
+  } catch (err) {
+    console.warn("[Agent] Failed, returning fallback done:", err);
+    return { thought: "Error communicating with intelligence engine.", action: { type: "done", summary: "API failure" } };
   }
-
-  // Click each tab
-  for (const tabGroup of scan.tabGroups) {
-    for (const tabId of tabGroup.tabIds) {
-      plan.push({ type: "click", elementId: tabId, purpose: `try tab in ${tabGroup.purpose}` });
-    }
-  }
-
-  // Click primary CTAs not already covered
-  for (const ctaId of scan.primaryCTAIds) {
-    if (!scan.forms.some(f => f.submitId === ctaId)) {
-      plan.push({ type: "click", elementId: ctaId, purpose: "try primary CTA" });
-      plan.push({ type: "wait", purpose: "wait for CTA result" });
-    }
-  }
-
-  // Nav links if nothing else or to explore deeper
-  for (const navId of scan.navLinkIds) {
-    plan.push({ type: "click", elementId: navId, purpose: "navigate to link" });
-  }
-
-  if (plan.length === 0) {
-    plan.push({ type: "done", summary: "No interactive elements found on this page" });
-  } else {
-    // End the queue processing for this page
-    plan.push({ type: "done", summary: "Finished exhaustive testing of this page's interactive elements" });
-  }
-
-  console.log(`[Planner] Built deterministic plan with ${plan.length} steps for ${scan.currentUrl}`);
-  return plan;
 }
+
 
 
 // ── 3. UX Report ──────────────────────────────────────────────────────────────
@@ -272,23 +312,27 @@ export async function generateUXReport(params: {
     ? `Type: ${appProfile.appType} | Audience: ${appProfile.audiencePersona} | Goal: ${appProfile.primaryGoal}`
     : description;
 
-  const system = `You are a simulation of 1000 real first-time users testing a startup's web app before it is published. You are providing honest, specific feedback directly to the developer based on their actual product.
+  const system = `You are a Senior UX/UI Engineer and accessibility expert analyzing a startup's web application. You are evaluating the app against Nielsen's 10 Usability Heuristics and modern design standards (WCAG, visual hierarchy, spacing).
 
 ${appCtx} | URL: ${url}
 
-IMPORTANT — This is a UX analysis of the WEBSITE. Do not penalize the website if the simulation bot clicked the wrong thing or encountered automation errors. Filter out automation noise and focus strictly on the app's actual design quality, clarity, flows, and feature completeness.
+IMPORTANT: Filter out any bot automation noise (e.g. if the bot clicked the wrong element). Focus STRICTLY on the actual UI/UX of the product shown in the screenshots and the structure of the timeline.
 
-Think like a developer reviewing user sessions. What do they need to fix before launching to 1000 users? Be specific — reference real UI elements, copy, and flows you observed.
+Your job is to provide HIGHLY ACTIONABLE, developer-ready feedback. Do not give generic advice like "make it look better" or "improve instructions".
+Instead, provide exact, technical UI/UX fixes:
+- "Increase the contrast ratio of the secondary button in the header from #555 to #333 for accessibility."
+- "Add a 24px margin-bottom to the form groups to improve visual separation."
+- "The 'Submit' button is visually lost; change its background to a primary brand color and add a hover state."
 
-Include in behaviourPatterns: what users naturally try to do (even things the app doesn't support yet, based on your intuition of the product).
+Include in behaviourPatterns: What users naturally try to do (even things the app doesn't support yet, based on your intuition).
 Include in featureSuggestions: 2-3 features users clearly want based on their behaviour.
 
 Return ONLY this JSON:
 {
-  "summary": "<2-3 sentence honest verdict as a representative for 1000 users>",
-  "whatWorkedWell": ["<specific strength with exact UI context>","<another>","<another>"],
-  "frictionPoints": ["<specific pain point real users would feel>","<another>","<another>"],
-  "improvements": ["<general area to improve>","<another>"],
+  "summary": "<2-3 sentence honest verdict as a Senior UX Engineer>",
+  "whatWorkedWell": ["<specific UI/UX strength with exact element context>","<another>","<another>"],
+  "frictionPoints": ["<specific heuristic violation or UI pain point>","<another>","<another>"],
+  "improvements": ["<exact, technical developer-ready fix (e.g. CSS, layout, copy)>","<another>"],
   "behaviourPatterns": ["<observed pattern>","<pattern>"],
   "featureSuggestions": ["<feature users clearly want>","<another>"]
 }`;

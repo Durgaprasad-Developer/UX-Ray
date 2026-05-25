@@ -71,9 +71,14 @@ export default function Home() {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to start analysis.");
-      router.push(`/session/${data.sessionId}`);
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to start analysis.");
+        router.push(`/session/${data.sessionId}`);
+      } else {
+        throw new Error(`Server returned ${res.status}: Restart your Next.js dev server if this persists.`);
+      }
     } catch (err: any) {
       setError(err.message || "Something went wrong.");
       setLoading(false);
