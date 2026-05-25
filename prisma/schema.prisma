@@ -12,9 +12,11 @@ model Session {
   url          String
   description  String
   prompt       String?
-  mode         String             @default("analysis") // "analysis" | "task"
+  credentials  String?            // JSON: {username, password} for login-required apps
+  mode         String             @default("analysis")
   status       String             // "pending", "running", "completed", "failed"
   error        String?
+  appProfile   String?            // JSON: AppProfile
   createdAt    DateTime           @default(now())
   completedAt  DateTime?
   events       InteractionEvent[]
@@ -34,12 +36,14 @@ model InteractionEvent {
 }
 
 model Report {
-  id             String   @id @default(uuid())
-  sessionId      String   @unique
-  session        Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  summary        String
-  whatWorkedWell String   // JSON string of array
-  frictionPoints String   // JSON string of array
-  improvements   String   // JSON string of array
-  createdAt      DateTime @default(now())
+  id              String   @id @default(uuid())
+  sessionId       String   @unique
+  session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  summary         String
+  whatWorkedWell  String   // JSON string of array
+  frictionPoints  String   // JSON string of array
+  improvements    String   // JSON string of array
+  checklistItems  String?  // JSON: ChecklistItem[] — prioritized actionable fixes
+  experienceScore String?  // JSON: ExperienceScore — 0-100 with sub-scores
+  createdAt       DateTime @default(now())
 }

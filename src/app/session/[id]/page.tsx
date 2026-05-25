@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { 
-  ArrowLeft, Play, AlertTriangle, CheckCircle, 
-  Terminal, BarChart3, HelpCircle, Loader2, Sparkles, ChevronRight
+import {
+  ArrowLeft, AlertTriangle, CheckCircle,
+  Terminal, BarChart3, Loader2, Sparkles, ChevronRight,
+  Zap, Clock, Shield, Smile, Eye, Target, TrendingUp
 } from "lucide-react";
 
 interface TimelineEvent {
@@ -16,11 +17,42 @@ interface TimelineEvent {
   screenshotUrl?: string;
 }
 
+interface ChecklistItem {
+  priority: "critical" | "high" | "medium";
+  effort: "5min" | "1hour" | "1day";
+  area: string;
+  fix: string;
+  impact: string;
+}
+
+interface ExperienceScore {
+  overall: number;
+  clarity: number;
+  navigation: number;
+  speed: number;
+  trust: number;
+  delight: number;
+  verdict: string;
+  readyToShip: boolean;
+}
+
+interface AppProfile {
+  appType: string;
+  primaryGoal: string;
+  audiencePersona: string;
+  testingPlan: string;
+}
+
 interface UXReport {
   summary: string;
   whatWorkedWell: string[];
   frictionPoints: string[];
   improvements: string[];
+  checklistItems?: ChecklistItem[];
+  experienceScore?: ExperienceScore;
+  appProfile?: AppProfile;
+  behaviourPatterns?: string[];
+  featureSuggestions?: string[];
 }
 
 export default function SessionReplay() {
@@ -371,65 +403,182 @@ export default function SessionReplay() {
                     </p>
                   </div>
                 ) : report ? (
-                  <div className="flex flex-col gap-8 pb-12">
-                    <div className="p-6 rounded-2xl border border-zinc-800 bg-zinc-900/20 backdrop-blur-xl relative overflow-hidden">
-                      <div className="absolute top-0 right-0 p-4 opacity-5">
-                        <Sparkles className="w-24 h-24 text-purple-500" />
+                  <div className="flex flex-col gap-6 pb-12">
+
+                    {/* App Intelligence Banner */}
+                    {report.appProfile && (
+                      <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-purple-500/20 bg-purple-950/10 text-xs flex-wrap">
+                        <Target className="w-4 h-4 text-purple-400 shrink-0" />
+                        <span className="text-purple-300 font-semibold">Recognized:</span>
+                        <span className="text-zinc-300 font-mono">{report.appProfile.appType}</span>
+                        <span className="text-zinc-600">·</span>
+                        <span className="text-zinc-400">Testing as: <span className="text-zinc-300">{report.appProfile.audiencePersona}</span></span>
                       </div>
-                      <h3 className="text-xs font-semibold text-purple-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                        <Sparkles className="w-4 h-4" />
-                        <span>Executive UX Critique</span>
-                      </h3>
-                      <p className="text-sm text-zinc-300 leading-relaxed italic">
-                        "{report.summary}"
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="p-5 rounded-xl border border-emerald-950/30 bg-emerald-950/10 flex flex-col gap-4">
-                        <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
-                          <CheckCircle className="w-4 h-4" />
-                          <span>What Worked Well</span>
+                    )}
+
+                    {/* Experience Score Hero */}
+                    {report.experienceScore && (
+                      <div className="p-6 rounded-2xl border border-zinc-800 bg-zinc-900/30">
+                        <div className="flex items-start justify-between mb-5">
+                          <div>
+                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-1">Human Experience Score</p>
+                            <div className="flex items-end gap-3">
+                              <span className={`text-6xl font-black font-sans leading-none ${
+                                report.experienceScore.overall >= 75 ? "text-emerald-400" :
+                                report.experienceScore.overall >= 55 ? "text-amber-400" : "text-rose-400"
+                              }`}>{report.experienceScore.overall}</span>
+                              <span className="text-zinc-500 text-lg mb-1">/100</span>
+                            </div>
+                          </div>
+                          <div className={`px-4 py-2 rounded-xl border font-bold text-sm ${
+                            report.experienceScore.readyToShip
+                              ? "border-emerald-500/30 bg-emerald-950/30 text-emerald-400"
+                              : "border-amber-500/30 bg-amber-950/30 text-amber-400"
+                          }`}>
+                            {report.experienceScore.readyToShip ? "✓ Ready to Ship" : "⚠ Needs Work"}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-5 gap-3 mb-5">
+                          {([
+                            { label: "Clarity", key: "clarity" as const, icon: Eye },
+                            { label: "Navigate", key: "navigation" as const, icon: TrendingUp },
+                            { label: "Speed", key: "speed" as const, icon: Zap },
+                            { label: "Trust", key: "trust" as const, icon: Shield },
+                            { label: "Delight", key: "delight" as const, icon: Smile },
+                          ]).map(({ label, key, icon: Icon }) => {
+                            const val = report.experienceScore![key];
+                            const color = val >= 75 ? "bg-emerald-400" : val >= 55 ? "bg-amber-400" : "bg-rose-400";
+                            return (
+                              <div key={key} className="flex flex-col gap-1.5">
+                                <div className="flex items-center gap-1 text-[10px] text-zinc-500">
+                                  <Icon className="w-3 h-3" />
+                                  <span>{label}</span>
+                                </div>
+                                <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                                  <div className={`h-full rounded-full ${color}`} style={{ width: `${val}%` }} />
+                                </div>
+                                <span className="text-[11px] font-bold text-zinc-300">{val}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <blockquote className="border-l-2 border-purple-500/40 pl-4 text-sm text-zinc-300 italic leading-relaxed">
+                          &ldquo;{report.experienceScore.verdict}&rdquo;
+                        </blockquote>
+                      </div>
+                    )}
+
+                    {/* Actionable Checklist */}
+                    {report.checklistItems && report.checklistItems.length > 0 && (
+                      <div className="flex flex-col gap-3">
+                        <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
+                          <CheckCircle className="w-4 h-4 text-teal-400" />
+                          Actionable Fix Checklist
                         </h4>
-                        <ul className="flex flex-col gap-2.5">
+                        {report.checklistItems.map((item, i) => {
+                          const ps = item.priority === "critical"
+                            ? { bar: "bg-rose-500", badge: "bg-rose-950 text-rose-400 border-rose-500/20", label: "Critical" }
+                            : item.priority === "high"
+                            ? { bar: "bg-amber-500", badge: "bg-amber-950 text-amber-400 border-amber-500/20", label: "High" }
+                            : { bar: "bg-yellow-600", badge: "bg-yellow-950 text-yellow-400 border-yellow-500/20", label: "Medium" };
+                          const es = item.effort === "5min"
+                            ? "bg-emerald-950 text-emerald-400 border-emerald-500/20"
+                            : item.effort === "1hour"
+                            ? "bg-cyan-950 text-cyan-400 border-cyan-500/20"
+                            : "bg-zinc-800 text-zinc-400 border-zinc-700";
+                          return (
+                            <div key={i} className="flex rounded-xl border border-zinc-800 bg-zinc-900/20 overflow-hidden">
+                              <div className={`w-1 shrink-0 ${ps.bar}`} />
+                              <div className="flex-1 p-4">
+                                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                  <span className={`text-[10px] px-2 py-0.5 rounded border font-bold ${ps.badge}`}>{ps.label}</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded border font-bold flex items-center gap-1 ${es}`}>
+                                    <Clock className="w-2.5 h-2.5" /> {item.effort}
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">{item.area}</span>
+                                </div>
+                                <p className="text-xs text-white font-semibold mb-1 leading-relaxed">{item.fix}</p>
+                                <p className="text-[11px] text-zinc-500 italic">{item.impact}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* User Behaviour Patterns + Feature Suggestions */}
+                    {((report.behaviourPatterns?.length ?? 0) > 0 || (report.featureSuggestions?.length ?? 0) > 0) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {report.behaviourPatterns && report.behaviourPatterns.length > 0 && (
+                          <div className="p-5 rounded-xl border border-cyan-950/30 bg-cyan-950/10 flex flex-col gap-3">
+                            <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-2">
+                              <Eye className="w-4 h-4" />User Behaviour Patterns
+                            </h4>
+                            <p className="text-[10px] text-zinc-500 -mt-1">What users naturally try to do — even things the app doesn&apos;t support yet.</p>
+                            <ul className="flex flex-col gap-2">
+                              {report.behaviourPatterns.map((b, i) => (
+                                <li key={i} className="text-xs text-zinc-400 flex items-start gap-2 leading-relaxed">
+                                  <span className="text-cyan-500 font-bold mt-0.5">→</span><span>{b}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {report.featureSuggestions && report.featureSuggestions.length > 0 && (
+                          <div className="p-5 rounded-xl border border-purple-950/30 bg-purple-950/10 flex flex-col gap-3">
+                            <h4 className="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-2">
+                              <Sparkles className="w-4 h-4" />Feature Opportunities
+                            </h4>
+                            <p className="text-[10px] text-zinc-500 -mt-1">Features users clearly wanted but your app doesn&apos;t have yet.</p>
+                            <ul className="flex flex-col gap-2">
+                              {report.featureSuggestions.map((f, i) => (
+                                <li key={i} className="text-xs text-zinc-400 flex items-start gap-2 leading-relaxed">
+                                  <span className="text-purple-400 font-bold mt-0.5">+</span><span>{f}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* What Worked / Friction */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-5 rounded-xl border border-emerald-950/30 bg-emerald-950/10 flex flex-col gap-3">
+                        <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                          <CheckCircle className="w-4 h-4" />What Worked Well
+                        </h4>
+                        <ul className="flex flex-col gap-2">
                           {report.whatWorkedWell.map((w, i) => (
                             <li key={i} className="text-xs text-zinc-400 flex items-start gap-2 leading-relaxed">
-                              <span className="text-emerald-500 font-bold">•</span>
-                              <span>{w}</span>
+                              <span className="text-emerald-500 font-bold mt-0.5">•</span><span>{w}</span>
                             </li>
                           ))}
                         </ul>
                       </div>
-                      <div className="p-5 rounded-xl border border-amber-950/30 bg-amber-950/10 flex flex-col gap-4">
+                      <div className="p-5 rounded-xl border border-amber-950/30 bg-amber-950/10 flex flex-col gap-3">
                         <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
-                          <AlertTriangle className="w-4 h-4" />
-                          <span>UX Friction Points</span>
+                          <AlertTriangle className="w-4 h-4" />UX Friction Points
                         </h4>
-                        <ul className="flex flex-col gap-2.5">
+                        <ul className="flex flex-col gap-2">
                           {report.frictionPoints.map((f, i) => (
                             <li key={i} className="text-xs text-zinc-400 flex items-start gap-2 leading-relaxed">
-                              <span className="text-amber-500 font-bold">•</span>
-                              <span>{f}</span>
+                              <span className="text-amber-500 font-bold mt-0.5">•</span><span>{f}</span>
                             </li>
                           ))}
                         </ul>
                       </div>
                     </div>
-                    <div className="flex flex-col gap-4">
-                      <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
-                        <BarChart3 className="w-4 h-4 text-purple-400" />
-                        <span>Top Fixes & Prioritized Improvements</span>
+
+                    {/* Researcher Summary */}
+                    <div className="p-5 rounded-xl border border-zinc-800 bg-zinc-900/20 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-3 opacity-5"><Sparkles className="w-16 h-16 text-purple-500" /></div>
+                      <h4 className="text-xs font-semibold text-purple-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <Sparkles className="w-3.5 h-3.5" />Researcher Summary
                       </h4>
-                      <div className="flex flex-col gap-3">
-                        {report.improvements.map((imp, i) => (
-                          <div key={i} className="p-4 rounded-xl border border-zinc-800 bg-zinc-900/20 flex gap-4 items-center">
-                            <div className="w-8 h-8 rounded-lg bg-purple-950/30 border border-purple-500/20 flex items-center justify-center font-bold text-sm text-purple-400 shrink-0">
-                              {i + 1}
-                            </div>
-                            <p className="text-xs text-zinc-300 leading-relaxed font-semibold">{imp}</p>
-                          </div>
-                        ))}
-                      </div>
+                      <p className="text-sm text-zinc-300 leading-relaxed italic">&ldquo;{report.summary}&rdquo;</p>
                     </div>
+
                   </div>
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center gap-4 text-zinc-500">

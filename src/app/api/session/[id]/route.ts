@@ -24,6 +24,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       prompt: session.prompt,
       mode: session.mode,
       status: session.status,
+      appProfile: session.appProfile ? JSON.parse(session.appProfile) : null,
       events: session.events.map(e => ({
         id: e.id,
         timestamp: e.timestamp,
@@ -36,7 +37,10 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
         summary: session.report.summary,
         whatWorkedWell: JSON.parse(session.report.whatWorkedWell),
         frictionPoints: JSON.parse(session.report.frictionPoints),
-        improvements: JSON.parse(session.report.improvements)
+        improvements: JSON.parse(session.report.improvements),
+        checklistItems: session.report.checklistItems ? JSON.parse(session.report.checklistItems) : [],
+        experienceScore: session.report.experienceScore ? JSON.parse(session.report.experienceScore) : null,
+        appProfile: session.appProfile ? JSON.parse(session.appProfile) : null,
       } : null
     });
   } catch (error) {

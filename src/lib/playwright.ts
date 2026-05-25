@@ -121,20 +121,20 @@ export class BrowserSimulator {
 
   /**
    * Evaluates if the page is currently in a loading state.
+   * Detects: CSS class-based spinners, aria-busy, animation classes, and visible async-processing text.
    */
   async getPageState(): Promise<{ isLoaded: boolean; documentState: string; hasLoader: boolean }> {
     if (!this.page) return { isLoaded: true, documentState: "complete", hasLoader: false };
     
     return await this.page.evaluate(() => {
       const docState = document.readyState;
-      
-      // Look for common loading indicators (spinners, skeletons, progress bars)
       const loaderSelectors = [
         '[class*="spinner"]', '[class*="loader"]', '[class*="loading"]',
         '[role="progressbar"]', '[aria-busy="true"]',
-        'svg.animate-spin'
+        'svg.animate-spin', '[class*="animate-spin"]',
+        '[class*="animate-pulse"]', '[class*="animate-bounce"]',
+        '[class*="skeleton"]'
       ];
-      
       let hasLoader = false;
       for (const sel of loaderSelectors) {
         const el = document.querySelector(sel);
@@ -146,12 +146,46 @@ export class BrowserSimulator {
           }
         }
       }
-      
-      return {
-        isLoaded: docState === "complete" && !hasLoader,
-        documentState: docState,
-        hasLoader
-      };
+      if (!hasLoader) {
+        const asyncPhrases = ["analyzing","fetching","generating","processing","loading","please wait","scanning","computing","running"];
+        const nodes = document.querySelectorAll("p,span,h1,h2,h3,h4,h5,h6,div,li");
+        for (const node of nodes) {
+          const el = node as HTMLElement;
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          const inView = rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight && rect.bottom > 0 && style.display !== "none" && style.visibility !== "hidden";
+          if (!inView) continue;
+          const text = (el.textContent || "").toLowerCase().trim();
+          if (text.length < 120 && asyncPhrases.some(p => text.includes(p))) { hasLoader = true; break; }
+        }
+      }
+      return { isLoaded: docState === "complete" && !hasLoader, documentState: docState, hasLoader };
+    });
+  }
+
+  /**
+   * Extracts rich visible text from the page for AI-based app recognition.
+   * Returns: title, headings, nav links, button labels, visible body text.
+   */
+  async getPageText(): Promise<string> {
+    if (!this.page) return "";
+    return await this.page.evaluate(() => {
+      const parts: string[] = [];
+      const title = document.title;
+      if (title) parts.push(`TITLE: ${title}`);
+      const h1s = Array.from(document.querySelectorAll("h1")).map(h => h.textContent?.trim()).filter(Boolean);
+      if (h1s.length) parts.push(`H1: ${h1s.join(" | ")}`);
+      const h2s = Array.from(document.querySelectorAll("h2")).slice(0, 5).map(h => h.textContent?.trim()).filter(Boolean);
+      if (h2s.length) parts.push(`H2: ${h2s.join(" | ")}`);
+      const navLinks = Array.from(document.querySelectorAll("nav a, header a, [role='navigation'] a")).slice(0, 15).map(a => (a as HTMLElement).textContent?.trim()).filter(Boolean);
+      if (navLinks.length) parts.push(`NAV: ${navLinks.join(", ")}`);
+      const buttons = Array.from(document.querySelectorAll("button, [role='button'], input[type='submit']")).slice(0, 10).map(b => (b as HTMLElement).textContent?.trim() || (b as HTMLInputElement).value).filter(Boolean);
+      if (buttons.length) parts.push(`BUTTONS: ${buttons.join(", ")}`);
+      const inputs = Array.from(document.querySelectorAll("input, textarea")).slice(0, 8).map(i => { const el = i as HTMLInputElement; return el.placeholder || el.getAttribute("aria-label") || el.name || el.type; }).filter(Boolean);
+      if (inputs.length) parts.push(`INPUTS: ${inputs.join(", ")}`);
+      const bodyText = (document.body.innerText || "").slice(0, 600).replace(/\s+/g, " ");
+      if (bodyText) parts.push(`CONTENT: ${bodyText}`);
+      return parts.join("\n");
     });
   }
 
@@ -226,10 +260,44 @@ export class BrowserSimulator {
     return "page scrolled down";
   }
 
-  async wait(seconds: number = 2): Promise<string> {
+  /**
+   * Dynamic wait: polls page loading state every second.
+   * Reports exactly how long it waited and whether loading was active.
+   * Waits up to maxSeconds (default 30) for any active loading to complete.
+   */
+  async wait(maxSeconds: number = 30): Promise<string> {
     if (!this.page) throw new Error("Browser not initialized.");
-    await this.page.waitForTimeout(seconds * 1000);
-    return `waited ${seconds} seconds`;
+
+    const pollIntervalMs = 1000;
+    let elapsed = 0;
+    let wasLoading = false;
+
+    while (elapsed < maxSeconds) {
+      const state = await this.getPageState();
+
+      if (!state.isLoaded) {
+        // Page is actively loading — record that we detected it
+        wasLoading = true;
+        await this.page.waitForTimeout(pollIntervalMs);
+        elapsed++;
+        continue;
+      }
+
+      // Page is now idle — stop waiting
+      break;
+    }
+
+    if (wasLoading) {
+      return `waited ${elapsed} second${elapsed !== 1 ? "s" : ""} for loading state to complete`;
+    } else {
+      // Page was already idle when wait() was called — still waited a short beat
+      await this.page.waitForTimeout(pollIntervalMs);
+      return `waited 1 second (page was already fully loaded)`;
+    }
+  }
+
+  async getCurrentUrl(): Promise<string> {
+    return this.page?.url() || "";
   }
 
   async screenshotBase64(): Promise<string> {
