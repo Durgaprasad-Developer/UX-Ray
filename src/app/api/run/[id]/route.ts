@@ -109,6 +109,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
               history: history.map(h => ({ action: h.action, target: h.target || undefined })),
               visitedUrls,
               typedElementIds: Array.from(typedElementIds),
+              credentials: credentials || undefined,
             });
 
             if (decision.thought) {

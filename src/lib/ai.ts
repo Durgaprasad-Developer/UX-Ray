@@ -94,11 +94,10 @@ function extractArray(text: string): string {
 
 // ── Smart typing values ───────────────────────────────────────────────────────
 
-export function inferSmartTypingValue(el: DomElement, url: string, appProfile?: AppProfile): string {
+export function inferSmartTypingValue(el: DomElement, url: string, appProfile?: AppProfile, credentials?: { username?: string; password?: string }): string {
   const hint = [el.placeholder || "", el.name || "", el.text || "", el.type || ""].join(" ").toLowerCase();
-  if (/github|username|handle/.test(hint) || /github/.test(url)) return "torvalds";
-  if (/email|e-mail/.test(hint) || el.type === "email") return "tester@example.com";
-  if (/password|passwd/.test(hint) || el.type === "password") return "TestPass123!";
+  if (/github|username|handle|email|e-mail/.test(hint) || el.type === "email") return credentials?.username || "tester@example.com";
+  if (/password|passwd/.test(hint) || el.type === "password") return credentials?.password || "TestPass123!";
   if (/search|query|find|keyword/.test(hint) || el.type === "search") {
     const at = (appProfile?.appType || "").toLowerCase();
     if (/job|career/.test(at)) return "software engineer";
@@ -210,8 +209,9 @@ export async function getAgentDecision(params: {
   history: Array<{ action: string; target?: string }>;
   visitedUrls: string[];
   typedElementIds?: number[];
+  credentials?: { username?: string; password?: string };
 }): Promise<{ thought: string; action: QueueItem }> {
-  const { scan, appProfile, history, visitedUrls } = params;
+  const { scan, appProfile, history, visitedUrls, credentials } = params;
 
   const formsText = scan.forms.length > 0
     ? scan.forms.map((f, i) => `Form ${i + 1} (${f.purpose}): inputs=${JSON.stringify(f.inputIds)}, submit=${f.submitId}`).join("\n")
@@ -231,6 +231,7 @@ You observe the screen, think about what needs testing, and take ONE ACTION at a
 
 App: ${appProfile.appType} | Audience: ${appProfile.audiencePersona}
 Goal: ${appProfile.primaryGoal}
+${credentials ? `\nPROVIDED CREDENTIALS (YOU MUST USE THESE WHEN TYPING): Username/Email: "${credentials.username || ''}" | Password: "${credentials.password || ''}"` : ""}
 
 CURRENT PAGE: ${scan.currentUrl}
 ${scan.pageText.slice(0, 400)}
@@ -281,7 +282,7 @@ For "done", action should be: { "type": "done", "summary": "<reason>" }`;
     if (result.action.type === "type" && result.action.elementId) {
       const el = scan.elements.find(e => e.id === result.action.elementId);
       if (el && (!result.action.value || result.action.value === "")) {
-        result.action.value = inferSmartTypingValue(el, scan.currentUrl, appProfile);
+        result.action.value = inferSmartTypingValue(el, scan.currentUrl, appProfile, credentials);
       }
     }
     
