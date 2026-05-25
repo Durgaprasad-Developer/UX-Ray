@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, AlertTriangle, CheckCircle,
   Terminal, BarChart3, Loader2, Sparkles, ChevronRight,
-  Zap, Clock, Shield, Smile, Eye, Target, TrendingUp
+  Zap, Clock, Shield, Smile, Eye, Target, TrendingUp, Share2
 } from "lucide-react";
 
 interface TimelineEvent {
@@ -227,36 +227,51 @@ export default function SessionReplay() {
         </div>
 
         {/* Tab Controls */}
-        <div className="flex bg-zinc-900/80 border border-zinc-800 p-1 rounded-lg">
-          <button 
-            onClick={() => setActiveTab("replay")}
-            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-              activeTab === "replay" 
-                ? "bg-purple-600 text-white shadow-lg" 
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            Session Replay
-          </button>
-          <button 
-            onClick={() => setActiveTab("report")}
-            disabled={status !== "completed" && !report && events.length === 0}
-            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-              activeTab === "report" 
-                ? "bg-purple-600 text-white shadow-lg" 
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            {sessionInfo?.mode === "task" ? "Task Log" : "UX Audit Report"}
-          </button>
+        <div className="flex items-center gap-3">
+          <div className="flex bg-zinc-900/80 border border-zinc-800 p-1 rounded-lg">
+            <button 
+              onClick={() => setActiveTab("replay")}
+              className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "replay" 
+                  ? "bg-purple-600 text-white shadow-lg" 
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              Session Replay
+            </button>
+            <button 
+              onClick={() => setActiveTab("report")}
+              disabled={status !== "completed" && !report && events.length === 0}
+              className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                activeTab === "report" 
+                  ? "bg-purple-600 text-white shadow-lg" 
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              {sessionInfo?.mode === "task" ? "Task Log" : "UX Audit Report"}
+            </button>
+          </div>
+          
+          {activeTab === "report" && status === "completed" && (
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(window.location.href);
+                alert("Report link copied to clipboard!");
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-all cursor-pointer border border-zinc-700"
+            >
+              <Share2 className="w-4 h-4" />
+              Share Report
+            </button>
+          )}
         </div>
       </header>
 
       {/* Main Workspace split screen */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden h-[calc(100vh-69px)]">
         
-        {/* Left Side: Browser Mockup Replay View */}
-        <div className="lg:col-span-8 p-6 flex flex-col justify-center items-center bg-zinc-950 relative overflow-hidden border-r border-zinc-900">
+        {/* Left Side: Browser Mockup Replay View OR Full Report */}
+        <div className={`${activeTab === "report" ? "lg:col-span-12" : "lg:col-span-8"} p-6 flex flex-col justify-center items-center bg-zinc-950 relative overflow-hidden border-r border-zinc-900 transition-all duration-300`}>
           
           <div className="absolute top-[-10%] left-[-10%] w-[300px] h-[300px] bg-purple-500/5 rounded-full blur-[80px] pointer-events-none" />
 
@@ -594,7 +609,8 @@ export default function SessionReplay() {
         </div>
 
         {/* Right Side: Terminal Log timeline */}
-        <div className="lg:col-span-4 flex flex-col bg-zinc-950 border-t lg:border-t-0 border-zinc-900">
+        {activeTab !== "report" && (
+          <div className="lg:col-span-4 flex flex-col bg-zinc-950 border-t lg:border-t-0 border-zinc-900">
           
           {/* Console / Terminal Section */}
           <div className="flex-1 flex flex-col min-h-0 border-b border-zinc-900">
@@ -668,6 +684,7 @@ export default function SessionReplay() {
           </div>
 
         </div>
+        )}
 
       </div>
     </div>

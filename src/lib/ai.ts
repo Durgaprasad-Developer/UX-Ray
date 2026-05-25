@@ -196,85 +196,14 @@ export async function recognizeApp(params: { url: string; description: string; p
   }
 }
 
-// ── 2. Queue-based Page Planner (the core intelligence) ──────────────────────
-// Called ONCE per page — builds a deterministic action plan the run loop executes
+// ── 2. Queue-based Page Planner (Deterministic Graph/Queue Crawler) ─────────────
+// Called ONCE per page — builds a deterministic action plan to exhaustively click elements
 
-export async function buildPagePlan(params: {
+export async function buildDeterministicPagePlan(params: {
   scan: PageScan;
   appProfile: AppProfile;
-  credentials: { username?: string; password?: string } | null;
-  history: Array<{ action: string; target?: string }>;
-  visitedUrls: string[];
 }): Promise<QueueItem[]> {
-  const { scan, appProfile, credentials, history, visitedUrls } = params;
-
-  const credNote = credentials?.username
-    ? `LOGIN CREDENTIALS: username="${credentials.username}" password="${credentials.password}". Use them if you see a login form.`
-    : "";
-
-  const formsText = scan.forms.length > 0
-    ? scan.forms.map((f, i) => `Form ${i + 1} (${f.purpose}): inputs=${JSON.stringify(f.inputIds)}, submit=${f.submitId}`).join("\n")
-    : "No forms detected";
-
-  const tabsText = scan.tabGroups.length > 0
-    ? scan.tabGroups.map(t => `TabGroup (${t.purpose}): tabIds=${JSON.stringify(t.tabIds)}`).join("\n")
-    : "No tab groups detected";
-
-  const historyText = history.slice(-8).map(h => `[${h.action}] ${h.target || "—"}`).join("\n") || "No prior actions";
-
-  const elements = scan.elements.slice(0, 30);
-
-  const system = `You are a systematic QA engineer testing a web application. You think like an expert who tests every feature exhaustively.
-
-App: ${appProfile.appType} | Audience: ${appProfile.audiencePersona}
-Goal: ${appProfile.primaryGoal}
-${credNote}
-
-CURRENT PAGE: ${scan.currentUrl}
-${scan.pageText.slice(0, 400)}
-
-PAGE STRUCTURE:
-${formsText}
-${tabsText}
-Primary CTAs (element IDs): ${JSON.stringify(scan.primaryCTAIds)}
-Nav links (element IDs): ${JSON.stringify(scan.navLinkIds)}
-All elements (id, tag, text/placeholder): ${JSON.stringify(elements.map(e => ({id: e.id, tag: e.tag, t: e.text?.slice(0,30)||e.placeholder?.slice(0,30)||e.type})))}
-
-PRIOR ACTIONS:
-${historyText}
-
-Already visited URLs: ${visitedUrls.join(", ") || "none yet"}
-
-PLANNING RULES:
-1. For EACH form: first fill ALL inputs (use typeOnly for each), then click submit
-2. For tab groups: click EACH tab in sequence, then interact with the content under each tab  
-3. For primary CTAs not in forms: click them to see what happens
-4. Try nav links to pages not yet visited
-5. Use realistic data — GitHub usernames use "torvalds", emails use "tester@example.com", passwords "TestPass123!"
-6. If nothing meaningful left to do on this page, return done
-7. MAXIMUM 12 actions per page plan
-
-Return ONLY a JSON array of actions. Each action has:
-{ "type": "typeOnly"|"type"|"click"|"wait"|"scroll"|"done", "elementId": <number or null>, "value": "<for type/typeOnly>", "purpose": "<why, 10 words max>" }
-
-For "done", use: { "type": "done", "summary": "<what was tested on this page>" }`;
-
-  const user = "Build the complete action plan for this page as a JSON array.";
-
-  try {
-    const text = await callNvidia(system, user, 800);
-    const arr = JSON.parse(extractArray(text)) as QueueItem[];
-    if (!Array.isArray(arr) || arr.length === 0) throw new Error("empty plan");
-    console.log(`[Planner] Built plan with ${arr.length} steps for ${scan.currentUrl}`);
-    return arr;
-  } catch (err) {
-    console.warn("[Planner] Failed, using smart default plan:", err);
-    return buildDefaultPlan(scan, appProfile);
-  }
-}
-
-// Smart fallback plan when AI planner fails
-function buildDefaultPlan(scan: PageScan, appProfile: AppProfile): QueueItem[] {
+  const { scan, appProfile } = params;
   const plan: QueueItem[] = [];
 
   // Fill all forms
@@ -293,30 +222,35 @@ function buildDefaultPlan(scan: PageScan, appProfile: AppProfile): QueueItem[] {
 
   // Click each tab
   for (const tabGroup of scan.tabGroups) {
-    for (const tabId of tabGroup.tabIds.slice(0, 4)) {
+    for (const tabId of tabGroup.tabIds) {
       plan.push({ type: "click", elementId: tabId, purpose: `try tab in ${tabGroup.purpose}` });
     }
   }
 
   // Click primary CTAs not already covered
-  for (const ctaId of scan.primaryCTAIds.slice(0, 3)) {
+  for (const ctaId of scan.primaryCTAIds) {
     if (!scan.forms.some(f => f.submitId === ctaId)) {
       plan.push({ type: "click", elementId: ctaId, purpose: "try primary CTA" });
       plan.push({ type: "wait", purpose: "wait for CTA result" });
     }
   }
 
-  // Nav links if nothing else
-  if (plan.length === 0 && scan.navLinkIds.length > 0) {
-    plan.push({ type: "click", elementId: scan.navLinkIds[0], purpose: "navigate to next page" });
+  // Nav links if nothing else or to explore deeper
+  for (const navId of scan.navLinkIds) {
+    plan.push({ type: "click", elementId: navId, purpose: "navigate to link" });
   }
 
   if (plan.length === 0) {
     plan.push({ type: "done", summary: "No interactive elements found on this page" });
+  } else {
+    // End the queue processing for this page
+    plan.push({ type: "done", summary: "Finished exhaustive testing of this page's interactive elements" });
   }
 
+  console.log(`[Planner] Built deterministic plan with ${plan.length} steps for ${scan.currentUrl}`);
   return plan;
 }
+
 
 // ── 3. UX Report ──────────────────────────────────────────────────────────────
 
@@ -338,25 +272,25 @@ export async function generateUXReport(params: {
     ? `Type: ${appProfile.appType} | Audience: ${appProfile.audiencePersona} | Goal: ${appProfile.primaryGoal}`
     : description;
 
-  const system = `You are a senior UX researcher reviewing a startup's web app on behalf of real developers who need honest, specific feedback.
+  const system = `You are a simulation of 1000 real first-time users testing a startup's web app before it is published. You are providing honest, specific feedback directly to the developer based on their actual product.
 
 ${appCtx} | URL: ${url}
 
-IMPORTANT — this is a UX analysis of the WEBSITE, not the simulation. If the tester made a mistake (e.g., clicked wrong thing), IGNORE that — focus on the app's actual design quality.
+IMPORTANT — This is a UX analysis of the WEBSITE. Do not penalize the website if the simulation bot clicked the wrong thing or encountered automation errors. Filter out automation noise and focus strictly on the app's actual design quality, clarity, flows, and feature completeness.
 
-Report what 1000 real first-time users would experience. Be specific — reference real UI elements, copy, flows you observed.
+Think like a developer reviewing user sessions. What do they need to fix before launching to 1000 users? Be specific — reference real UI elements, copy, and flows you observed.
 
-Include in behaviourPatterns: what users naturally try to do (even things the app doesn't support).
-Include in featureSuggestions: 2-3 features users clearly wanted based on their behaviour.
+Include in behaviourPatterns: what users naturally try to do (even things the app doesn't support yet, based on your intuition of the product).
+Include in featureSuggestions: 2-3 features users clearly want based on their behaviour.
 
 Return ONLY this JSON:
 {
-  "summary": "<2-3 sentence honest verdict as if you just used it>",
+  "summary": "<2-3 sentence honest verdict as a representative for 1000 users>",
   "whatWorkedWell": ["<specific strength with exact UI context>","<another>","<another>"],
   "frictionPoints": ["<specific pain point real users would feel>","<another>","<another>"],
   "improvements": ["<general area to improve>","<another>"],
   "behaviourPatterns": ["<observed pattern>","<pattern>"],
-  "featureSuggestions": ["<feature users clearly wanted>","<another>"]
+  "featureSuggestions": ["<feature users clearly want>","<another>"]
 }`;
 
   const user = `Test timeline:\n${timelineText}\n\nAnalyze the site's UX quality and return the report JSON.`;

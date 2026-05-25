@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { BrowserSimulator } from "@/lib/playwright";
-import { buildPagePlan, recognizeApp, AppProfile, QueueItem } from "@/lib/ai";
+import { buildDeterministicPagePlan, recognizeApp, AppProfile, QueueItem } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
 
@@ -100,12 +100,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
               send("log", { message: `🧠 Planning: found ${scan.forms.length} form(s), ${scan.tabGroups.length} tab group(s), ${scan.primaryCTAIds.length} CTA(s)` });
 
-              currentQueue = await buildPagePlan({
+              currentQueue = await buildDeterministicPagePlan({
                 scan,
                 appProfile: appProfile!,
-                credentials,
-                history: history.map(h => ({ action: h.action, target: h.target || undefined })),
-                visitedUrls,
               });
 
               send("log", { message: `📋 Plan: ${currentQueue.length} actions queued` });
