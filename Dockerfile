@@ -4,7 +4,6 @@ FROM mcr.microsoft.com/playwright:v1.44.0-jammy
 WORKDIR /app
 
 # Set environment variables for Next.js and Playwright
-ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
@@ -24,7 +23,8 @@ RUN npx prisma generate
 # Build the Next.js application
 RUN npm run build
 
-# Hugging Face Spaces strictly requires apps to run on port 7860
+# Set Node environment to production and set port for Hugging Face Spaces
+ENV NODE_ENV=production
 ENV PORT=7860
 EXPOSE 7860
 
