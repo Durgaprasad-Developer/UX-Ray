@@ -262,7 +262,8 @@ ALGORITHMIC QA EXPLORATION RULES:
 4. STRICT SEQUENCE: If you just filled a form input (type action), your very next action MUST be to click the corresponding submit button or CTA. Do NOT type another value into the same input.
 5. WAIT PATIENCE: If you just clicked a submit button or CTA, your next action MUST be "wait" to let the backend process and the UI update.
 6. STRICT ANTI-LOOP: You MUST NOT repeat an action on the same element you see in your RECENT HISTORY. If you find yourself doing the same thing, choose "navigate" (click a nav link) or return "done".
-7. Return ONLY JSON.
+7. SCROLLING: You only see elements in the current viewport. If you are exploring the page or looking for more features, you MUST use the "scroll" action to move down and reveal new elements.
+8. Return ONLY JSON.
 
 Return format:
 {

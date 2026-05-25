@@ -363,7 +363,7 @@ export class BrowserSimulator {
 
   async scroll(): Promise<string> {
     if (!this.page) throw new Error("Browser not initialized.");
-    await this.page.evaluate(() => window.scrollBy({ top: 350, behavior: "smooth" }));
+    await this.page.evaluate(() => window.scrollBy({ top: window.innerHeight * 0.8, behavior: "smooth" }));
     await this.page.waitForTimeout(800);
     return "scrolled down";
   }
