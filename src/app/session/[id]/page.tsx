@@ -321,7 +321,7 @@ export default function SessionReplay() {
                     <Sparkles className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
                     <div>
                       <span className="text-[10px] text-purple-400 font-bold block mb-1 uppercase tracking-wider">AI Thoughts (Simulating First-Time User)</span>
-                      <p className="text-zinc-300 italic">"{currentThought}"</p>
+                      <p className="text-zinc-300 italic">&quot;{currentThought}&quot;</p>
                     </div>
                   </div>
                 )}
@@ -671,7 +671,7 @@ export default function SessionReplay() {
                     
                     {e.reasoning && (
                       <p className="text-[10px] text-zinc-400 leading-relaxed italic bg-zinc-950/40 p-2 rounded border border-zinc-800/40">
-                        "{e.reasoning}"
+                        &quot;{e.reasoning}&quot;
                       </p>
                     )}
                   </button>
