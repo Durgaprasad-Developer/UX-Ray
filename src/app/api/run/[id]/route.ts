@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { BrowserSimulator } from "@/lib/playwright";
-import { getAgentDecision, recognizeApp, AppProfile } from "@/lib/ai";
+import { buildPagePlan, recognizeApp, AppProfile, QueueItem } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
 
@@ -18,23 +18,20 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       }
 
       const session = await prisma.session.findUnique({ where: { id: sessionId } });
-      if (!session) {
-        send("error", { message: "Session not found." });
-        controller.close();
-        return;
-      }
+      if (!session) { send("error", { message: "Session not found." }); controller.close(); return; }
 
       await prisma.session.update({ where: { id: sessionId }, data: { status: "running" } });
 
       const simulator = new BrowserSimulator();
-      const maxSteps = 20;
       const startTime = Date.now();
-      let appProfile: AppProfile | undefined;
-      let consecutiveScrolls = 0;
       const visitedUrls: string[] = [];
-
-      // Parse credentials if provided
+      let appProfile: AppProfile | undefined;
       let credentials: { username?: string; password?: string } | null = null;
+      let totalSteps = 0;
+      const MAX_TOTAL_STEPS = 25;
+      const MAX_PAGES = 5;
+      let pagesVisited = 0;
+
       try {
         if (session.credentials) credentials = JSON.parse(session.credentials);
       } catch {}
@@ -47,181 +44,164 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         await simulator.navigate(session.url);
         visitedUrls.push(session.url);
 
-        // Take initial screenshot + page text simultaneously for App Recognizer
-        send("log", { message: "Scanning page structure and content..." });
-        const [initialScreenshot, pageText] = await Promise.all([
+        // ── Phase 1: App Recognition ──────────────────────────────────────────
+        send("log", { message: "Scanning page structure..." });
+        const [screenshot0, pageText0] = await Promise.all([
           simulator.screenshotBase64(),
           simulator.getPageText(),
         ]);
 
-        // Run App Recognizer
         send("log", { message: "App Recognizer building mental model of your product..." });
-        const recognizerPromise = recognizeApp({
-          url: session.url,
-          description: session.description,
-          pageText,
-        });
+        appProfile = await recognizeApp({ url: session.url, description: session.description, pageText: pageText0 });
 
-        // Save landing event while recognizer runs
+        send("log", { message: `✓ Identified: ${appProfile.appType}` });
+        send("log", { message: `✓ Audience: ${appProfile.audiencePersona}` });
+        send("log", { message: `✓ Pages to cover: ${appProfile.navigationPages.join(", ")}` });
+        if (credentials?.username) send("log", { message: "✓ Login credentials ready" });
+
+        await prisma.session.update({ where: { id: sessionId }, data: { appProfile: JSON.stringify(appProfile) } });
+
+        // Save landing event
         const landingEvent = await prisma.interactionEvent.create({
           data: {
             sessionId: session.id,
             timestamp: 0,
             action: "navigate",
-            target: "Landed on homepage",
-            reasoning: "First impression — reviewing layout, value proposition, and navigation structure.",
-            screenshotUrl: `data:image/png;base64,${initialScreenshot}`,
+            target: `Landed on ${new URL(session.url).hostname}`,
+            reasoning: "First impression — reading layout, value proposition, and navigation.",
+            screenshotUrl: `data:image/png;base64,${screenshot0}`,
           },
         });
+        send("event", { id: landingEvent.id, timestamp: 0, action: "navigate", target: landingEvent.target, reasoning: landingEvent.reasoning, screenshotUrl: landingEvent.screenshotUrl });
 
-        send("event", {
-          id: landingEvent.id, timestamp: 0, action: "navigate",
-          target: landingEvent.target, reasoning: landingEvent.reasoning,
-          screenshotUrl: landingEvent.screenshotUrl,
-        });
-
-        appProfile = await recognizerPromise;
-        send("log", { message: `✓ Recognized: ${appProfile.appType}` });
-        send("log", { message: `✓ Audience: ${appProfile.audiencePersona}` });
-        send("log", { message: `✓ Pages to test: ${appProfile.navigationPages.join(", ")}` });
-        if (appProfile.requiresAuth && credentials) send("log", { message: `✓ Login credentials ready` });
-        if (appProfile.requiresAuth && !credentials) send("log", { message: `⚠ App requires auth — no credentials provided. Will test public pages only.` });
-
-        await prisma.session.update({
-          where: { id: sessionId },
-          data: { appProfile: JSON.stringify(appProfile) },
-        });
-
-        // ── Main Interaction Loop ──────────────────────────────────────────────
+        // ── Phase 2: Queue-based page exploration ─────────────────────────────
         let isDone = false;
-        let step = 0;
+        let currentQueue: QueueItem[] = [];
+        let lastBuiltForUrl = "";
 
-        while (step < maxSteps && !isDone) {
-          step++;
+        while (!isDone && totalSteps < MAX_TOTAL_STEPS && pagesVisited < MAX_PAGES) {
+          const currentUrl = await simulator.getCurrentUrl();
 
-          try {
-            // Get current page state + elements
-            const [elements, pageState] = await Promise.all([
-              simulator.getInteractableElements(),
-              simulator.getPageState(),
-            ]);
-
-            const history = await prisma.interactionEvent.findMany({
-              where: { sessionId: session.id },
-              orderBy: { timestamp: "asc" },
-              select: { action: true, target: true, reasoning: true },
-            });
-
-            // Detect action loop (same action + target 3 times in a row)
-            let isStuckInActionLoop = false;
-            if (history.length >= 3) {
-              const last3 = history.slice(-3);
-              if (last3.every(h => h.action === last3[0].action && h.target === last3[0].target) &&
-                  !["wait", "scroll"].includes(last3[0].action)) {
-                isStuckInActionLoop = true;
-              }
-            }
-            const isStuckScrolling = consecutiveScrolls >= 3;
-
-            if (consecutiveScrolls >= 5) {
-              send("log", { message: `[Step ${step}] Reached page end — no more content. Moving on.` });
-              // Try clicking a nav link instead of giving up
-              consecutiveScrolls = 0;
+          // Rebuild plan when: queue empty OR page changed
+          if (currentQueue.length === 0 || currentUrl !== lastBuiltForUrl) {
+            if (currentUrl !== lastBuiltForUrl) {
+              pagesVisited++;
+              send("log", { message: `📄 Now testing: ${currentUrl}` });
+              visitedUrls.push(currentUrl);
             }
 
-            send("log", { message: `[Step ${step}/${maxSteps}] ${elements.length} elements visible — ${pageState.isLoaded ? "page ready" : "page loading..."}` });
+            try {
+              const scan = await simulator.getPageScan();
+              const history = await prisma.interactionEvent.findMany({
+                where: { sessionId: session.id },
+                orderBy: { timestamp: "asc" },
+                select: { action: true, target: true },
+              });
 
-            const decision = await getAgentDecision({
-              url: session.url,
-              description: session.description,
-              prompt: session.prompt || "Test the complete user experience from start to finish",
-              appProfile,
-              credentials,
-              pageState,
-              isStuckScrolling,
-              isStuckInActionLoop,
-              elements,
-              history: history.map(h => ({ action: h.action, target: h.target || undefined, reasoning: h.reasoning || undefined })),
-              visitedUrls,
-            });
+              send("log", { message: `🧠 Planning: found ${scan.forms.length} form(s), ${scan.tabGroups.length} tab group(s), ${scan.primaryCTAIds.length} CTA(s)` });
 
-            send("thought", { thought: decision.thought, action: decision.action });
+              currentQueue = await buildPagePlan({
+                scan,
+                appProfile: appProfile!,
+                credentials,
+                history: history.map(h => ({ action: h.action, target: h.target || undefined })),
+                visitedUrls,
+              });
 
-            if (decision.action === "done") {
-              send("log", { message: `[Step ${step}] Navigator completed the session — all key areas tested.` });
+              send("log", { message: `📋 Plan: ${currentQueue.length} actions queued` });
+              lastBuiltForUrl = currentUrl;
+            } catch (planErr: any) {
+              send("log", { message: `Plan build error: ${planErr.message}. Skipping page.` });
               isDone = true;
               break;
             }
+          }
 
-            // Execute action
-            let targetText = "";
-            try {
-              if (decision.action === "click" && decision.targetId) {
-                targetText = await simulator.click(decision.targetId);
-                consecutiveScrolls = 0;
-                // Track if URL changed
-                const currentUrl = await simulator.getCurrentUrl?.() || session.url;
-                if (currentUrl !== visitedUrls[visitedUrls.length - 1]) visitedUrls.push(currentUrl);
-              } else if (decision.action === "type" && decision.targetId && decision.value) {
-                targetText = await simulator.type(decision.targetId, decision.value);
-                consecutiveScrolls = 0;
-              } else if (decision.action === "scroll") {
-                targetText = await simulator.scroll();
-                consecutiveScrolls++;
-              } else if (decision.action === "wait") {
-                targetText = await simulator.wait();
-                consecutiveScrolls = 0;
-              }
-            } catch (actionErr: any) {
-              console.warn(`[Step ${step}] Action error (non-fatal): ${actionErr.message}`);
-              targetText = `(action had minor issue: ${actionErr.message?.slice(0, 60)})`;
+          if (currentQueue.length === 0) { isDone = true; break; }
+
+          const item = currentQueue.shift()!;
+
+          // Handle done
+          if (item.type === "done") {
+            send("log", { message: `✓ Page complete: ${(item as any).summary || "all items tested"}` });
+
+            // Try to navigate to a next unvisited nav page
+            const nextUrl = appProfile?.navigationPages?.find(p => !visitedUrls.some(v => v.includes(p)));
+            if (nextUrl && pagesVisited < MAX_PAGES - 1) {
+              try {
+                const fullUrl = nextUrl.startsWith("http") ? nextUrl : new URL(nextUrl, session.url).href;
+                send("log", { message: `🔗 Moving to: ${fullUrl}` });
+                await simulator.navigate(fullUrl);
+                lastBuiltForUrl = ""; // force rebuild
+                currentQueue = [];
+                continue;
+              } catch {}
             }
 
-            const screenshot = await simulator.screenshotBase64();
-            const offsetSeconds = Math.round((Date.now() - startTime) / 1000);
-
-            const event = await prisma.interactionEvent.create({
-              data: {
-                sessionId: session.id,
-                timestamp: offsetSeconds,
-                action: decision.action,
-                target: targetText,
-                reasoning: decision.thought,
-                screenshotUrl: `data:image/png;base64,${screenshot}`,
-              },
-            });
-
-            send("event", {
-              id: event.id, timestamp: event.timestamp, action: event.action,
-              target: event.target, reasoning: event.reasoning, screenshotUrl: event.screenshotUrl,
-            });
-
-            await new Promise(r => setTimeout(r, 800));
-
-          } catch (stepErr: any) {
-            // Per-step error isolation — log and continue, don't kill session
-            console.warn(`[Step ${step}] Step error (continuing): ${stepErr.message}`);
-            send("log", { message: `[Step ${step}] Recovered from minor issue — continuing...` });
-            await new Promise(r => setTimeout(r, 1000));
+            isDone = true;
+            break;
           }
+
+          totalSteps++;
+          send("log", { message: `[${totalSteps}] ${item.type.toUpperCase()} — ${(item as any).purpose || ""}` });
+
+          // Execute queue item
+          let targetText = "";
+          let actionName = item.type;
+
+          try {
+            if (item.type === "type" && item.elementId) {
+              targetText = await simulator.type(item.elementId, item.value);
+            } else if (item.type === "typeOnly" && item.elementId) {
+              targetText = await simulator.typeOnly(item.elementId, item.value);
+              actionName = "type";
+            } else if (item.type === "click" && item.elementId) {
+              targetText = await simulator.click(item.elementId);
+            } else if (item.type === "wait") {
+              targetText = await simulator.wait();
+            } else if (item.type === "scroll") {
+              targetText = await simulator.scroll();
+            }
+          } catch (actionErr: any) {
+            console.warn(`[Step ${totalSteps}] Action error (non-fatal): ${actionErr.message}`);
+            targetText = `(element not found — minor simulation issue)`;
+          }
+
+          const screenshot = await simulator.screenshotBase64();
+          const offsetSeconds = Math.round((Date.now() - startTime) / 1000);
+          const purpose = (item as any).purpose || "";
+
+          const event = await prisma.interactionEvent.create({
+            data: {
+              sessionId: session.id,
+              timestamp: offsetSeconds,
+              action: actionName,
+              target: targetText || purpose,
+              reasoning: purpose,
+              screenshotUrl: `data:image/png;base64,${screenshot}`,
+            },
+          });
+
+          send("event", {
+            id: event.id, timestamp: event.timestamp, action: event.action,
+            target: event.target, reasoning: event.reasoning, screenshotUrl: event.screenshotUrl,
+          });
+
+          await new Promise(r => setTimeout(r, 600));
         }
 
+        // ── Wrap up ───────────────────────────────────────────────────────────
         await prisma.session.update({
           where: { id: sessionId },
           data: { status: "completed", completedAt: new Date() },
         });
-
-        const stepSummary = isDone ? "All key areas tested." : `Completed ${step} steps — reached session limit.`;
-        send("log", { message: `Session complete. ${stepSummary}` });
-        send("complete", { message: "Simulation finished.", mode: "analysis", status: "success" });
+        send("log", { message: `✓ Session complete — ${totalSteps} interactions across ${pagesVisited} page(s).` });
+        send("complete", { message: "Analysis finished.", mode: "analysis", status: "success" });
 
       } catch (err: any) {
         console.error("Fatal session error:", err);
-        await prisma.session.update({
-          where: { id: sessionId },
-          data: { status: "failed", error: err.message || "Unknown error." },
-        }).catch(() => {});
-        send("error", { message: err.message || "Session encountered a fatal error." });
+        await prisma.session.update({ where: { id: sessionId }, data: { status: "failed", error: err.message } }).catch(() => {});
+        send("error", { message: err.message || "Session failed." });
       } finally {
         await simulator.cleanup();
         controller.close();

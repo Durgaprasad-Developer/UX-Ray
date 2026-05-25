@@ -1,34 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import type { PageScan } from "./playwright";
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY || "";
 const NVIDIA_KEY = process.env.NVIDIA_API_KEY || "";
 const ai = new GoogleGenerativeAI(GEMINI_KEY);
 
-// ── Utilities ─────────────────────────────────────────────────────────────────
-
-function extractJSON(text: string): string {
-  const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-  const s = cleaned.indexOf("{"), e = cleaned.lastIndexOf("}");
-  if (s !== -1 && e > s) return cleaned.slice(s, e + 1);
-  return cleaned;
-}
-
-function extractArray(text: string): string {
-  const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-  const s = cleaned.indexOf("["), e = cleaned.lastIndexOf("]");
-  if (s !== -1 && e > s) return cleaned.slice(s, e + 1);
-  try {
-    const os = cleaned.indexOf("{"), oe = cleaned.lastIndexOf("}");
-    if (os !== -1 && oe > os) {
-      const obj: any = JSON.parse(cleaned.slice(os, oe + 1));
-      const arr = Object.values(obj).find(Array.isArray);
-      if (arr) return JSON.stringify(arr);
-    }
-  } catch {}
-  return "[]";
-}
-
-// ── Interfaces ─────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface DomElement {
   id: number;
@@ -40,12 +17,14 @@ export interface DomElement {
   role?: string;
 }
 
-export interface AgentDecision {
-  thought: string;
-  action: "click" | "type" | "scroll" | "wait" | "done";
-  targetId?: number;
-  value?: string;
-}
+// Queue item — deterministic action plan built once per page
+export type QueueItem =
+  | { type: "type"; elementId: number; value: string; purpose: string }
+  | { type: "typeOnly"; elementId: number; value: string; purpose: string } // fill without Enter
+  | { type: "click"; elementId: number; purpose: string }
+  | { type: "wait"; purpose: string }
+  | { type: "scroll"; purpose: string }
+  | { type: "done"; summary: string };
 
 export interface AppProfile {
   appType: string;
@@ -86,37 +65,54 @@ export interface UXReport {
   featureSuggestions?: string[];
 }
 
-// ── Smart Typing ──────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-export function inferSmartTypingValue(
-  element: DomElement,
-  url: string,
-  appProfile?: AppProfile
-): string {
-  const hint = [element.placeholder || "", element.name || "", element.text || "", element.type || ""].join(" ").toLowerCase();
-  const urlLower = url.toLowerCase();
-
-  if (/github|username|handle|profile/.test(hint) || /github/.test(urlLower)) return "torvalds";
-  if (/email|e-mail/.test(hint) || element.type === "email") return "tester@example.com";
-  if (/password|passwd/.test(hint) || element.type === "password") return "TestPass123!";
-  if (/search|query|find|keyword/.test(hint) || element.type === "search") {
-    const at = (appProfile?.appType || "").toLowerCase();
-    if (at.includes("job") || at.includes("career")) return "software engineer";
-    if (at.includes("ecommerce") || at.includes("product")) return "laptop";
-    return "example";
-  }
-  if (/full.?name|first.?name|\bname\b/.test(hint)) return "Alex Turner";
-  if (/phone|tel|mobile/.test(hint) || element.type === "tel") return "555-123-4567";
-  if (/url|website|link/.test(hint) || element.type === "url") return "https://example.com";
-  if (element.type === "number") return "1";
-  return "hello world";
+function extractJSON(text: string): string {
+  const c = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const s = c.indexOf("{"), e = c.lastIndexOf("}");
+  return s !== -1 && e > s ? c.slice(s, e + 1) : c;
 }
 
-// ── NVIDIA Caller (primary for ALL decisions) ─────────────────────────────────
+function extractArray(text: string): string {
+  const c = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const s = c.indexOf("["), e = c.lastIndexOf("]");
+  if (s !== -1 && e > s) return c.slice(s, e + 1);
+  try {
+    const os = c.indexOf("{"), oe = c.lastIndexOf("}");
+    if (os !== -1 && oe > os) {
+      const arr = Object.values(JSON.parse(c.slice(os, oe + 1))).find(Array.isArray);
+      if (arr) return JSON.stringify(arr);
+    }
+  } catch {}
+  return "[]";
+}
 
-async function callNvidia(system: string, user: string, maxTokens = 600): Promise<string> {
+// ── Smart typing values ───────────────────────────────────────────────────────
+
+export function inferSmartTypingValue(el: DomElement, url: string, appProfile?: AppProfile): string {
+  const hint = [el.placeholder || "", el.name || "", el.text || "", el.type || ""].join(" ").toLowerCase();
+  if (/github|username|handle/.test(hint) || /github/.test(url)) return "torvalds";
+  if (/email|e-mail/.test(hint) || el.type === "email") return "tester@example.com";
+  if (/password|passwd/.test(hint) || el.type === "password") return "TestPass123!";
+  if (/search|query|find|keyword/.test(hint) || el.type === "search") {
+    const at = (appProfile?.appType || "").toLowerCase();
+    if (/job|career/.test(at)) return "software engineer";
+    if (/ecomm|product|shop/.test(at)) return "laptop";
+    return "example";
+  }
+  if (/name/.test(hint)) return "Alex Turner";
+  if (/phone|tel/.test(hint) || el.type === "tel") return "555-123-4567";
+  if (/url|website/.test(hint) || el.type === "url") return "https://example.com";
+  if (el.type === "number") return "1";
+  return "hello";
+}
+
+// ── NVIDIA caller (primary for all decisions) ─────────────────────────────────
+
+async function callNvidia(system: string, user: string, maxTokens = 700): Promise<string> {
   if (!NVIDIA_KEY) throw new Error("NVIDIA_API_KEY not set");
-  const models = ["meta/llama-3.1-70b-instruct", "meta/llama-3.1-8b-instruct", "meta/llama-3.2-3b-instruct"];
+  // Use llama-3.3-70b as primary (fastest good model), fall back to 8b
+  const models = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-8b-instruct", "meta/llama-3.2-3b-instruct"];
   let last: any;
   for (const model of models) {
     try {
@@ -127,221 +123,202 @@ async function callNvidia(system: string, user: string, maxTokens = 600): Promis
           model,
           messages: [{ role: "system", content: system }, { role: "user", content: user }],
           max_tokens: maxTokens,
-          temperature: 0.3,
+          temperature: 0.2,
         }),
       });
       if (res.status === 429) {
-        // Rate-limited — wait 2s and try next model
-        console.warn(`[NVIDIA] ${model}: 429 rate-limited, skipping`);
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 1500));
         continue;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const text = data.choices?.[0]?.message?.content?.trim();
-      if (!text) throw new Error("empty response");
-      console.log(`[NVIDIA] OK: ${model}`);
+      if (!text) throw new Error("empty");
+      console.log(`[NVIDIA] OK: ${model} (${maxTokens} max)`);
       return text;
     } catch (e: any) {
-      if (!e.message?.includes("429")) console.warn(`[NVIDIA] ${model}: ${e.message?.slice(0, 60)}`);
+      if (!e.message?.includes("429")) console.warn(`[NVIDIA] ${model}: ${e.message?.slice(0, 50)}`);
       last = e;
     }
   }
   throw last;
 }
 
-// ── Gemini Caller (ONLY for multimodal report screenshots) ───────────────────
+// ── Gemini multimodal (screenshots only, for UX report) ──────────────────────
 
 async function callGeminiMultimodal(parts: any[], system: string): Promise<string> {
-  if (!GEMINI_KEY) throw new Error("GEMINI_API_KEY not set");
-  const models = ["gemini-2.0-flash", "gemini-1.5-flash"];
-  let last: any;
-  for (const model of models) {
+  if (!GEMINI_KEY) throw new Error("no GEMINI_API_KEY");
+  for (const model of ["gemini-2.0-flash", "gemini-1.5-flash"]) {
     try {
       const m = ai.getGenerativeModel({ model, systemInstruction: system, generationConfig: { responseMimeType: "application/json" } });
       const r = await m.generateContent(parts);
       const text = r.response.text()?.trim();
       if (text) return text;
     } catch (e: any) {
-      console.warn(`[Gemini] ${model}: ${e?.status || e?.message}`);
-      last = e;
+      console.warn(`[Gemini] ${model}: ${e?.status || e?.message?.slice(0, 40)}`);
     }
   }
-  throw last;
+  throw new Error("Gemini unavailable");
 }
 
-// ── 1. App Recognizer (NVIDIA — text-based, no vision needed) ─────────────────
+// ── 1. App Recognizer ─────────────────────────────────────────────────────────
 
-export async function recognizeApp(params: {
-  url: string;
-  description: string;
-  pageText: string;
-}): Promise<AppProfile> {
+export async function recognizeApp(params: { url: string; description: string; pageText: string }): Promise<AppProfile> {
   const { url, description, pageText } = params;
 
-  const system = `You are a senior UX researcher. Analyze this web app and return ONLY this JSON:
+  const system = `You are a senior UX researcher. Analyze this web app and return ONLY JSON:
 {
-  "appType": "<specific: e.g. github-profile-analyzer, saas-landing, ecommerce, portfolio, developer-tool, waitlist, form-tool, job-board>",
-  "primaryGoal": "<what a real user opens this to achieve>",
-  "expectedUserActions": ["<step 1>", "<step 2>", "<step 3>"],
-  "sensitiveFields": ["<field type needing real data: github_username, email, search_query, etc>"],
-  "testingPlan": "<2-3 sentences: systematic plan — what pages to visit, what flows to test, what forms to fill>",
-  "audiencePersona": "<who uses this, e.g. 'developers and recruiters reviewing GitHub profiles'>",
-  "requiresAuth": <true if login/signup is needed to access main features, false otherwise>,
-  "navigationPages": ["<page/section 1>", "<page/section 2>", "<all discoverable pages from nav>"]
+  "appType": "<specific type: github-analyzer|saas-landing|ecommerce|developer-tool|portfolio|job-board|form-tool|waitlist>",
+  "primaryGoal": "<what a real user opens this to accomplish>",
+  "expectedUserActions": ["<step 1>","<step 2>","<step 3>"],
+  "sensitiveFields": ["<github_username|email|search_query|etc>"],
+  "testingPlan": "<2-3 sentence systematic plan covering all pages and key flows to test>",
+  "audiencePersona": "<who uses this, specific>",
+  "requiresAuth": <true|false>,
+  "navigationPages": ["<page 1>","<page 2>","<all pages in nav>"]
 }`;
 
-  const user = `URL: ${url}
-User description: ${description}
-
-Page content extracted from the live site:
-${pageText}
-
-Analyze and return the app profile JSON.`;
+  const user = `URL: ${url}\nDescription: ${description}\n\nLive page content:\n${pageText}`;
 
   try {
-    const text = await callNvidia(system, user, 600);
-    return JSON.parse(extractJSON(text)) as AppProfile;
-  } catch (err) {
-    console.warn("[AppRecognizer] Failed, using default:", err);
+    return JSON.parse(extractJSON(await callNvidia(system, user, 500))) as AppProfile;
+  } catch {
     return {
       appType: "web-application",
-      primaryGoal: "Explore the website and use its main feature",
-      expectedUserActions: ["read the landing page", "find the main CTA", "try the core feature"],
+      primaryGoal: "Explore the site and try the main feature",
+      expectedUserActions: ["read landing page", "find main CTA", "try core feature"],
       sensitiveFields: ["text_input"],
-      testingPlan: "Navigate to every page in the navigation. Try every form and button. Test the main feature end-to-end.",
-      audiencePersona: "general web users",
+      testingPlan: "Visit every page in navigation. Fill every form. Try every button. Test the core feature end-to-end.",
+      audiencePersona: "general users",
       requiresAuth: false,
       navigationPages: ["homepage"],
     };
   }
 }
 
-// ── 2. Navigator — Systematic Site Explorer (NVIDIA only) ─────────────────────
+// ── 2. Queue-based Page Planner (the core intelligence) ──────────────────────
+// Called ONCE per page — builds a deterministic action plan the run loop executes
 
-export async function getAgentDecision(params: {
-  url: string;
-  description: string;
-  prompt: string;
-  appProfile?: AppProfile;
-  credentials?: { username?: string; password?: string } | null;
-  pageState?: { isLoaded: boolean; documentState: string; hasLoader: boolean };
-  isStuckScrolling?: boolean;
-  isStuckInActionLoop?: boolean;
-  elements: DomElement[];
-  history: Array<{ action: string; target?: string; reasoning?: string }>;
-  visitedUrls?: string[];
-}): Promise<AgentDecision> {
-  const { url, description, prompt, appProfile, credentials, pageState, isStuckScrolling, isStuckInActionLoop, elements, history, visitedUrls = [] } = params;
-
-  // If page is loading — short-circuit immediately, no AI call needed
-  if (pageState && !pageState.isLoaded) {
-    return { thought: "Page is still loading. Waiting for it to complete.", action: "wait" };
-  }
-
-  const historyText = history.length > 0
-    ? history.slice(-12).map((h, i) => `${i + 1}. [${h.action}] ${h.target || "—"}`).join("\n")
-    : "Just arrived. No actions taken yet.";
-
-  const appCtx = appProfile
-    ? `App type: ${appProfile.appType}
-Audience: ${appProfile.audiencePersona}
-User's goal: ${appProfile.primaryGoal}
-Natural flow: ${appProfile.expectedUserActions.join(" → ")}
-Pages to cover: ${appProfile.navigationPages.join(", ")}
-Testing mission: ${appProfile.testingPlan}`
-    : `App: ${description}`;
+export async function buildPagePlan(params: {
+  scan: PageScan;
+  appProfile: AppProfile;
+  credentials: { username?: string; password?: string } | null;
+  history: Array<{ action: string; target?: string }>;
+  visitedUrls: string[];
+}): Promise<QueueItem[]> {
+  const { scan, appProfile, credentials, history, visitedUrls } = params;
 
   const credNote = credentials?.username
-    ? `\nLOGIN CREDENTIALS AVAILABLE: username="${credentials.username}" password="${credentials.password}". If you see a login/signin form, use these credentials.`
+    ? `LOGIN CREDENTIALS: username="${credentials.username}" password="${credentials.password}". Use them if you see a login form.`
     : "";
 
-  const loopNote = isStuckInActionLoop
-    ? "\nWARNING: You repeated the same action 3+ times. Do NOT repeat it. Try a completely different element or return done."
-    : isStuckScrolling
-    ? "\nWARNING: Scrolled 3+ times with no interaction. The target is not here — click a navigation link to go to a different page, or return done."
-    : "";
+  const formsText = scan.forms.length > 0
+    ? scan.forms.map((f, i) => `Form ${i + 1} (${f.purpose}): inputs=${JSON.stringify(f.inputIds)}, submit=${f.submitId}`).join("\n")
+    : "No forms detected";
 
-  const visitedNote = visitedUrls.length > 0 ? `\nAlready visited: ${visitedUrls.join(", ")}` : "";
+  const tabsText = scan.tabGroups.length > 0
+    ? scan.tabGroups.map(t => `TabGroup (${t.purpose}): tabIds=${JSON.stringify(t.tabIds)}`).join("\n")
+    : "No tab groups detected";
 
-  const system = `You are a systematic UX tester conducting a complete audit of a web application. You are methodical, thorough, and think like an experienced QA engineer combined with a real first-time user.
+  const historyText = history.slice(-8).map(h => `[${h.action}] ${h.target || "—"}`).join("\n") || "No prior actions";
 
-${appCtx}${credNote}
+  const elements = scan.elements.slice(0, 30);
 
-Your mission: Test this app COMPLETELY.
-- Visit EVERY page listed in the navigation
-- Click EVERY major button and CTA
-- Fill EVERY form with realistic data
-- Try EVERY core feature
-- Note what's confusing, what's missing, what's great
+  const system = `You are a systematic QA engineer testing a web application. You think like an expert who tests every feature exhaustively.
 
-TYPING RULES — use realistic data, NEVER placeholders:
-- GitHub/username fields → "torvalds"
-- Email → "tester@example.com"  
-- Password → "TestPass123!"
-- Name → "Alex Turner"
-- Search → use a context-relevant term for this app type
+App: ${appProfile.appType} | Audience: ${appProfile.audiencePersona}
+Goal: ${appProfile.primaryGoal}
+${credNote}
 
-SESSION STATUS:
-${loopNote}${visitedNote}
+CURRENT PAGE: ${scan.currentUrl}
+${scan.pageText.slice(0, 400)}
 
-DECISION LOGIC — think situationally:
-1. If loading → WAIT
-2. If you see an unfilled input that matches your mission → TYPE realistic data
-3. If you just typed into inputs → CLICK the submit/action button
-4. If current page is done → CLICK a nav link to go to the next unvisited page
-5. If all main pages visited and features tested → done
-6. If genuinely stuck after 3 scrolls → try clicking nav, else done
+PAGE STRUCTURE:
+${formsText}
+${tabsText}
+Primary CTAs (element IDs): ${JSON.stringify(scan.primaryCTAIds)}
+Nav links (element IDs): ${JSON.stringify(scan.navLinkIds)}
+All elements (id, tag, text/placeholder): ${JSON.stringify(elements.map(e => ({id: e.id, tag: e.tag, t: e.text?.slice(0,30)||e.placeholder?.slice(0,30)||e.type})))}
 
-Return ONLY valid JSON (no markdown):
-{"thought":"<your reasoning — be specific about what you're doing and why>","action":"click"|"type"|"scroll"|"wait"|"done","targetId":<number>,"value":"<string>"}`;
-
-  const user = `Current URL: ${url}
-
-Recent actions:
+PRIOR ACTIONS:
 ${historyText}
 
-Visible interactive elements:
-${JSON.stringify(elements.slice(0, 25), null, 2)}
+Already visited URLs: ${visitedUrls.join(", ") || "none yet"}
 
-What is your next action?`;
+PLANNING RULES:
+1. For EACH form: first fill ALL inputs (use typeOnly for each), then click submit
+2. For tab groups: click EACH tab in sequence, then interact with the content under each tab  
+3. For primary CTAs not in forms: click them to see what happens
+4. Try nav links to pages not yet visited
+5. Use realistic data — GitHub usernames use "torvalds", emails use "tester@example.com", passwords "TestPass123!"
+6. If nothing meaningful left to do on this page, return done
+7. MAXIMUM 12 actions per page plan
 
-  // Primary: NVIDIA (only AI for navigation)
+Return ONLY a JSON array of actions. Each action has:
+{ "type": "typeOnly"|"type"|"click"|"wait"|"scroll"|"done", "elementId": <number or null>, "value": "<for type/typeOnly>", "purpose": "<why, 10 words max>" }
+
+For "done", use: { "type": "done", "summary": "<what was tested on this page>" }`;
+
+  const user = "Build the complete action plan for this page as a JSON array.";
+
   try {
-    const text = await callNvidia(system, user, 350);
-    const decision = JSON.parse(extractJSON(text)) as AgentDecision;
-    if (!decision.action || !["click", "type", "scroll", "wait", "done"].includes(decision.action)) {
-      throw new Error("Invalid action");
-    }
-    console.log(`[Nav] ${decision.action} → id=${decision.targetId} val="${decision.value?.slice(0, 30)}"`);
-    return decision;
+    const text = await callNvidia(system, user, 800);
+    const arr = JSON.parse(extractArray(text)) as QueueItem[];
+    if (!Array.isArray(arr) || arr.length === 0) throw new Error("empty plan");
+    console.log(`[Planner] Built plan with ${arr.length} steps for ${scan.currentUrl}`);
+    return arr;
   } catch (err) {
-    console.warn("[Nav] NVIDIA failed, using smart DOM fallback:", err);
+    console.warn("[Planner] Failed, using smart default plan:", err);
+    return buildDefaultPlan(scan, appProfile);
   }
-
-  // Smart DOM fallback — never throws
-  const input = elements.find(e =>
-    (e.tag === "input" && !["button", "submit", "checkbox", "radio", "hidden"].includes(e.type || "")) ||
-    e.tag === "textarea" || e.role === "textbox"
-  );
-  if (input) {
-    return { thought: "I see an input field. Filling it with realistic data.", action: "type", targetId: input.id, value: inferSmartTypingValue(input, url, appProfile) };
-  }
-  const actionBtn = elements.find(e =>
-    (e.tag === "button" || e.role === "button") &&
-    /submit|next|send|continue|go|done|analyze|search|sign.?up|log.?in|get.?start|try/i.test(e.text || "")
-  );
-  if (actionBtn) return { thought: "Found an action button. Clicking it.", action: "click", targetId: actionBtn.id };
-  const anyBtn = elements.find(e => e.tag === "button" || e.role === "button");
-  if (anyBtn) return { thought: "Clicking a button to progress.", action: "click", targetId: anyBtn.id };
-  const navLink = elements.find(e => e.tag === "a" && e.text && e.text.length > 1);
-  if (navLink) return { thought: "Following a navigation link.", action: "click", targetId: navLink.id };
-  const scrollCount = history.filter(h => h.action === "scroll").length;
-  if (scrollCount >= 4) return { thought: "Nothing more to explore. Ending session.", action: "done" };
-  return { thought: "Scrolling to find more content.", action: "scroll" };
 }
 
-// ── 3. UX Report — Gemini multimodal → NVIDIA fallback ───────────────────────
+// Smart fallback plan when AI planner fails
+function buildDefaultPlan(scan: PageScan, appProfile: AppProfile): QueueItem[] {
+  const plan: QueueItem[] = [];
+
+  // Fill all forms
+  for (const form of scan.forms) {
+    for (const inputId of form.inputIds) {
+      const el = scan.elements.find(e => e.id === inputId);
+      if (el) {
+        plan.push({ type: "typeOnly", elementId: inputId, value: inferSmartTypingValue(el, scan.currentUrl, appProfile), purpose: `fill ${el.placeholder || el.name || "input"}` });
+      }
+    }
+    if (form.submitId) {
+      plan.push({ type: "click", elementId: form.submitId, purpose: "submit form" });
+      plan.push({ type: "wait", purpose: "wait for result" });
+    }
+  }
+
+  // Click each tab
+  for (const tabGroup of scan.tabGroups) {
+    for (const tabId of tabGroup.tabIds.slice(0, 4)) {
+      plan.push({ type: "click", elementId: tabId, purpose: `try tab in ${tabGroup.purpose}` });
+    }
+  }
+
+  // Click primary CTAs not already covered
+  for (const ctaId of scan.primaryCTAIds.slice(0, 3)) {
+    if (!scan.forms.some(f => f.submitId === ctaId)) {
+      plan.push({ type: "click", elementId: ctaId, purpose: "try primary CTA" });
+      plan.push({ type: "wait", purpose: "wait for CTA result" });
+    }
+  }
+
+  // Nav links if nothing else
+  if (plan.length === 0 && scan.navLinkIds.length > 0) {
+    plan.push({ type: "click", elementId: scan.navLinkIds[0], purpose: "navigate to next page" });
+  }
+
+  if (plan.length === 0) {
+    plan.push({ type: "done", summary: "No interactive elements found on this page" });
+  }
+
+  return plan;
+}
+
+// ── 3. UX Report ──────────────────────────────────────────────────────────────
 
 export async function generateUXReport(params: {
   url: string;
@@ -351,104 +328,95 @@ export async function generateUXReport(params: {
   timeline: Array<{ timestamp: number; action: string; target?: string; reasoning?: string }>;
   screenshots: Array<{ timestamp: number; base64: string }>;
 }): Promise<UXReport> {
-  const { url, description, prompt, appProfile, timeline, screenshots } = params;
+  const { url, description, appProfile, timeline, screenshots } = params;
 
   const timelineText = timeline.slice(0, 15).map(t =>
-    `[${t.timestamp}s] ${t.action} → ${(t.target || "—").slice(0, 50)} | ${(t.reasoning || "").slice(0, 60)}`
+    `[${t.timestamp}s] ${t.action}: ${(t.target || "").slice(0, 60)}`
   ).join("\n");
-  const appCtx = appProfile ? `App: ${appProfile.appType} | Audience: ${appProfile.audiencePersona}` : `App: ${description}`;
 
-  const system = `You are a senior UX researcher writing an honest, actionable review for a startup founder or indie builder.
-${appCtx} | Goal tested: "${prompt}" | URL: ${url}
+  const appCtx = appProfile
+    ? `Type: ${appProfile.appType} | Audience: ${appProfile.audiencePersona} | Goal: ${appProfile.primaryGoal}`
+    : description;
 
-Think like you've watched 1000 users interact with this app. Be specific — mention actual UI elements, flows, and copy you observed.
+  const system = `You are a senior UX researcher reviewing a startup's web app on behalf of real developers who need honest, specific feedback.
 
-Include in behaviourPatterns: what users naturally try to do (even things the app doesn't support yet).
-Include in featureSuggestions: 2-3 features users clearly want but the app doesn't have, based on their behavior.
+${appCtx} | URL: ${url}
+
+IMPORTANT — this is a UX analysis of the WEBSITE, not the simulation. If the tester made a mistake (e.g., clicked wrong thing), IGNORE that — focus on the app's actual design quality.
+
+Report what 1000 real first-time users would experience. Be specific — reference real UI elements, copy, flows you observed.
+
+Include in behaviourPatterns: what users naturally try to do (even things the app doesn't support).
+Include in featureSuggestions: 2-3 features users clearly wanted based on their behaviour.
 
 Return ONLY this JSON:
 {
-  "summary": "<2-3 sentence honest first-person verdict>",
-  "whatWorkedWell": ["<specific strength with context>", "<another>"],
-  "frictionPoints": ["<specific pain point a real user would feel>", "<another>"],
-  "improvements": ["<general area 1>", "<general area 2>"],
-  "behaviourPatterns": ["<observed user behaviour pattern 1>", "<pattern 2>"],
-  "featureSuggestions": ["<feature users clearly wanted but was missing>", "<another>"]
+  "summary": "<2-3 sentence honest verdict as if you just used it>",
+  "whatWorkedWell": ["<specific strength with exact UI context>","<another>","<another>"],
+  "frictionPoints": ["<specific pain point real users would feel>","<another>","<another>"],
+  "improvements": ["<general area to improve>","<another>"],
+  "behaviourPatterns": ["<observed pattern>","<pattern>"],
+  "featureSuggestions": ["<feature users clearly wanted>","<another>"]
 }`;
 
-  const user = `Timeline:\n${timelineText}\n\nAnalyze and return the full UX report JSON.`;
+  const user = `Test timeline:\n${timelineText}\n\nAnalyze the site's UX quality and return the report JSON.`;
 
-  // Primary: Gemini multimodal (can analyze screenshots)
+  // Primary: Gemini multimodal (screenshots give visual context)
   try {
-    const parts: any[] = [user + "\n\nScreenshots from the session:"];
+    const parts: any[] = [user + "\n\nScreenshots:"];
     screenshots.forEach(s => parts.push({ inlineData: { mimeType: "image/png", data: s.base64 } }));
-    const text = await callGeminiMultimodal(parts, system);
-    return JSON.parse(extractJSON(text)) as UXReport;
+    return JSON.parse(extractJSON(await callGeminiMultimodal(parts, system))) as UXReport;
   } catch {
     console.warn("[UXReport] Gemini failed, trying NVIDIA");
   }
 
-  // Secondary: NVIDIA text-only
+  // Fallback: NVIDIA text-only
   try {
-    const text = await callNvidia(system, user, 700);
-    return JSON.parse(extractJSON(text)) as UXReport;
+    return JSON.parse(extractJSON(await callNvidia(system, user, 600))) as UXReport;
   } catch (err) {
     console.warn("[UXReport] Both failed:", err);
   }
 
   return {
-    summary: "The simulation completed. The AI navigated the page and tested the main flows.",
-    whatWorkedWell: ["Page loaded without errors", "Primary navigation was accessible"],
-    frictionPoints: ["Some interactive elements required extra steps to locate"],
-    improvements: ["Improve visual hierarchy for primary actions"],
+    summary: "The simulation ran and interacted with the site. Review the session replay for detailed interaction logs.",
+    whatWorkedWell: ["The page loaded and responded to interactions"],
+    frictionPoints: ["Unable to generate detailed analysis — check API configuration"],
+    improvements: ["Ensure NVIDIA_API_KEY and GEMINI_API_KEY are valid"],
     behaviourPatterns: [],
     featureSuggestions: [],
   };
 }
 
-// ── 4. Checklist Generator (NVIDIA Llama) ─────────────────────────────────────
+// ── 4. Checklist ──────────────────────────────────────────────────────────────
 
 export async function generateChecklistReport(params: {
   url: string;
   appProfile: AppProfile;
   uxSummary: string;
   frictionPoints: string[];
-  timeline: Array<{ timestamp: number; action: string; target?: string; reasoning?: string }>;
+  timeline: Array<{ action: string; target?: string }>;
 }): Promise<ChecklistItem[]> {
   const { url, appProfile, uxSummary, frictionPoints, timeline } = params;
 
-  const system = `You are a startup UX consultant giving a prioritized dev-ready checklist to an indie builder.
-Be brutally specific. Each item must say EXACTLY what to change — not vague advice like "improve UX".
+  const system = `You are a startup technical advisor giving a dev-ready prioritized fix list. Be brutally specific — name exact UI elements to change, not vague advice.
 
-Return ONLY a JSON array (6-9 items):
-[
-  {
-    "priority": "critical"|"high"|"medium",
-    "effort": "5min"|"1hour"|"1day",
-    "area": "<First Impression|Onboarding|Navigation|Copy|Performance|Trust|Feature>",
-    "fix": "<exact actionable instruction: e.g. 'Change hero headline to describe what the product does in 5 words or fewer'>",
-    "impact": "<why this matters to real users, 1 sentence>"
-  }
-]`;
+Return ONLY a JSON array of 6-8 items:
+[{"priority":"critical"|"high"|"medium","effort":"5min"|"1hour"|"1day","area":"<First Impression|Onboarding|Navigation|Copy|Performance|Trust|Feature|Accessibility>","fix":"<exact actionable instruction naming the specific element>","impact":"<why this matters to real users, 1 sentence>"}]`;
 
   const user = `App: ${appProfile.appType} at ${url}
 Audience: ${appProfile.audiencePersona}
-UX verdict: "${uxSummary}"
-Friction points: ${frictionPoints.map((f, i) => `${i + 1}. ${f}`).join("\n")}
-Steps taken: ${timeline.length}
+Verdict: "${uxSummary}"
+Friction found: ${frictionPoints.map((f, i) => `${i + 1}. ${f}`).join("\n")}
+Actions taken: ${timeline.length} total interactions
 
-Generate the checklist array now.`;
+Generate the prioritized checklist array.`;
 
   try {
-    const text = await callNvidia(system, user, 800);
-    return JSON.parse(extractArray(text)) as ChecklistItem[];
-  } catch (err) {
-    console.warn("[Checklist] Failed:", err);
-    return [];
-  }
+    return JSON.parse(extractArray(await callNvidia(system, user, 800))) as ChecklistItem[];
+  } catch { return []; }
 }
 
-// ── 5. Experience Scorer (NVIDIA) ─────────────────────────────────────────────
+// ── 5. Experience Scorer ──────────────────────────────────────────────────────
 
 export async function scoreExperience(params: {
   url: string;
@@ -461,37 +429,24 @@ export async function scoreExperience(params: {
   totalDuration: number;
 }): Promise<ExperienceScore> {
   const { url, appProfile, uxSummary, whatWorkedWell, frictionPoints, checklistItems, totalSteps, totalDuration } = params;
-  const criticalCount = checklistItems.filter(c => c.priority === "critical").length;
+  const criticals = checklistItems.filter(c => c.priority === "critical").length;
 
-  const system = `You are scoring a startup's web app UX on behalf of 1,000 first-time users.
-Be honest and calibrated. Most startups score 40-65. Above 80 = genuinely excellent.
+  const system = `You are scoring a startup's web app UX based on what 1000 real first-time users would experience.
+Calibration: most new startups score 40-65. Above 75 = genuinely polished. Above 85 = exceptional.
+Score based on the SITE QUALITY, not simulation execution.
 
-Return ONLY this JSON:
-{
-  "overall": <0-100 integer>,
-  "clarity": <0-100 — did users understand the product in <10s?>,
-  "navigation": <0-100 — could they find what they needed?>,
-  "speed": <0-100 — did it feel fast and responsive?>,
-  "trust": <0-100 — did it feel credible and professional?>,
-  "delight": <0-100 — any genuinely pleasant moments?>,
-  "verdict": "<2-3 sentence honest first-person review as if you just used it>",
-  "readyToShip": <true if overall >= 65 and criticalIssues = 0>
-}`;
+Return ONLY JSON:
+{"overall":<0-100>,"clarity":<0-100>,"navigation":<0-100>,"speed":<0-100>,"trust":<0-100>,"delight":<0-100>,"verdict":"<2-3 sentence honest review as if you just used it>","readyToShip":<true if overall>=65 and criticals=0>}`;
 
-  const user = `App: ${appProfile.appType} at ${url}
-Audience: ${appProfile.audiencePersona}
-${totalSteps} actions over ${totalDuration}s | Critical issues: ${criticalCount}
-Verdict: "${uxSummary}"
+  const user = `${appProfile.appType} at ${url} | ${appProfile.audiencePersona}
+${totalSteps} interactions over ${totalDuration}s | ${criticals} critical issues
+Summary: "${uxSummary}"
 Strengths: ${whatWorkedWell.join("; ")}
-Friction: ${frictionPoints.join("; ")}
-
-Score now.`;
+Friction: ${frictionPoints.join("; ")}`;
 
   try {
-    const text = await callNvidia(system, user, 400);
-    return JSON.parse(extractJSON(text)) as ExperienceScore;
-  } catch (err) {
-    console.warn("[Scorer] Failed:", err);
+    return JSON.parse(extractJSON(await callNvidia(system, user, 350))) as ExperienceScore;
+  } catch {
     return { overall: 50, clarity: 50, navigation: 50, speed: 50, trust: 50, delight: 30, verdict: "Simulation completed. Manual review recommended.", readyToShip: false };
   }
 }

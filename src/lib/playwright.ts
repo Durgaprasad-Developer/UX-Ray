@@ -1,6 +1,24 @@
 import { chromium, Browser, BrowserContext, Page } from "playwright";
 import { DomElement } from "./ai";
 
+// Rich page structure for queue-based planning
+export interface PageScan {
+  elements: DomElement[];
+  forms: Array<{
+    purpose: string;
+    inputIds: number[];
+    submitId: number | null;
+  }>;
+  tabGroups: Array<{
+    purpose: string;
+    tabIds: number[];
+  }>;
+  primaryCTAIds: number[];
+  navLinkIds: number[];
+  pageText: string;
+  currentUrl: string;
+}
+
 export class BrowserSimulator {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -10,14 +28,14 @@ export class BrowserSimulator {
   async initialize() {
     this.browser = await chromium.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
     this.context = await this.browser.newContext({
       viewport: { width: 1280, height: 800 },
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     });
     this.page = await this.context.newPage();
-    // Stealth injection to hide Playwright signature from Google reCAPTCHA
     await this.page.addInitScript(() => {
       Object.defineProperty(navigator, "webdriver", { get: () => undefined });
     });
@@ -25,8 +43,116 @@ export class BrowserSimulator {
 
   async navigate(url: string) {
     if (!this.page) throw new Error("Browser not initialized.");
-    await this.page.goto(url, { waitUntil: "networkidle", timeout: 20000 });
+    await this.page.goto(url, { waitUntil: "networkidle", timeout: 25000 });
   }
+
+  async getCurrentUrl(): Promise<string> {
+    return this.page?.url() || "";
+  }
+
+  // ── Core: Full page scan for queue-based planning ─────────────────────────
+
+  async getPageScan(): Promise<PageScan> {
+    if (!this.page) throw new Error("Browser not initialized.");
+
+    // Step 1: assign data-uxray-id to all visible interactables
+    const elements = await this.getInteractableElements();
+
+    // Step 2: group them semantically using DOM structure
+    const groups = await this.page.evaluate(() => {
+      const forms: Array<{ purpose: string; inputIds: number[]; submitId: number | null }> = [];
+      const tabGroups: Array<{ purpose: string; tabIds: number[] }> = [];
+      const primaryCTAIds: number[] = [];
+      const navLinkIds: number[] = [];
+
+      const getId = (el: HTMLElement | null) =>
+        el ? parseInt(el.getAttribute("data-uxray-id") || "-1") : -1;
+      const validId = (id: number) => id > 0;
+
+      // ── Detect forms (explicit <form> tags)
+      document.querySelectorAll("form").forEach((form) => {
+        const inputEls = Array.from(
+          form.querySelectorAll<HTMLElement>(
+            "input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select"
+          )
+        );
+        const inputIds = inputEls.map(getId).filter(validId);
+
+        const submitEl =
+          form.querySelector<HTMLElement>("button[type=submit], input[type=submit]") ||
+          form.querySelector<HTMLElement>("button");
+        const submitId = validId(getId(submitEl)) ? getId(submitEl) : null;
+
+        // Get form purpose from legend, fieldset label, aria-label, or nearest heading
+        const purposeEl =
+          form.querySelector("legend, [aria-label], label") ||
+          form.closest("section, article, div")?.querySelector("h1,h2,h3,h4");
+        const purpose =
+          (purposeEl as HTMLElement)?.textContent?.trim().slice(0, 60) || "form";
+
+        if (inputIds.length > 0) {
+          forms.push({ purpose, inputIds, submitId });
+        }
+      });
+
+      // ── Detect tab groups (role=tablist or common tab patterns)
+      const tabContainers = document.querySelectorAll<HTMLElement>(
+        "[role=tablist], .tabs, .tab-list, .tab-group, .tab-bar"
+      );
+      tabContainers.forEach((container) => {
+        const tabEls = Array.from(
+          container.querySelectorAll<HTMLElement>("[role=tab], .tab, button")
+        );
+        const tabIds = tabEls.map(getId).filter(validId);
+        const purpose =
+          container.getAttribute("aria-label") ||
+          container.closest("section, div")?.querySelector("h1,h2,h3,h4,p")?.textContent?.trim().slice(0, 40) ||
+          "tab group";
+        if (tabIds.length > 1) {
+          tabGroups.push({ purpose, tabIds });
+        }
+      });
+
+      // ── Detect nav links (header/nav anchors)
+      document
+        .querySelectorAll<HTMLElement>("nav a, header a, [role=navigation] a, footer a")
+        .forEach((el) => {
+          const id = getId(el);
+          if (validId(id)) navLinkIds.push(id);
+        });
+
+      // ── Detect primary CTAs (large/prominent buttons not in forms)
+      document.querySelectorAll<HTMLElement>("button, [role=button]").forEach((el) => {
+        const id = getId(el);
+        if (!validId(id)) return;
+        const rect = el.getBoundingClientRect();
+        const area = rect.width * rect.height;
+        const text = el.textContent?.toLowerCase() || "";
+        const isPrimary =
+          area > 3000 ||
+          /get.?start|sign.?up|try|analyze|submit|continue|next|create|login|join|launch|run|start/i.test(text);
+        if (isPrimary && !el.closest("form")) {
+          primaryCTAIds.push(id);
+        }
+      });
+
+      return { forms, tabGroups, primaryCTAIds, navLinkIds };
+    });
+
+    const pageText = await this.getPageText();
+
+    return {
+      elements,
+      forms: groups.forms,
+      tabGroups: groups.tabGroups,
+      primaryCTAIds: groups.primaryCTAIds,
+      navLinkIds: groups.navLinkIds,
+      pageText,
+      currentUrl: this.page!.url(),
+    };
+  }
+
+  // ── Core: All visible interactable elements with stable IDs ───────────────
 
   async getInteractableElements(): Promise<DomElement[]> {
     if (!this.page) throw new Error("Browser not initialized.");
@@ -35,82 +161,58 @@ export class BrowserSimulator {
       const list: any[] = [];
       let currentId = 1;
 
-      // Clear previous attributes to keep DOM clean
-      document.querySelectorAll("[data-uxray-id]").forEach(el => {
+      document.querySelectorAll("[data-uxray-id]").forEach((el) => {
         el.removeAttribute("data-uxray-id");
       });
 
       function isVisible(el: HTMLElement) {
         const rect = el.getBoundingClientRect();
         const style = window.getComputedStyle(el);
-        
-        // Native inputs should bypass pointer-events checks (useful for custom styled forms like Google Forms/Shadcn)
-        const isNativeInput = ["input", "textarea", "select"].includes(el.tagName.toLowerCase()) || 
-                              el.getAttribute("contenteditable") === "true" ||
-                              ["textbox", "checkbox", "radio"].includes(el.getAttribute("role") || "");
-
-        const basicVisible = (
+        const isInput = ["input", "textarea", "select"].includes(el.tagName.toLowerCase()) ||
+          el.getAttribute("contenteditable") === "true" ||
+          ["textbox", "checkbox", "radio"].includes(el.getAttribute("role") || "");
+        const ok =
           rect.width > 0 &&
           rect.height > 0 &&
           style.visibility !== "hidden" &&
           style.display !== "none" &&
           style.opacity !== "0" &&
-          (isNativeInput || style.pointerEvents !== "none")
-        );
-
-        if (!basicVisible) return false;
-
-        // Viewport Check: Check if element overlaps with active window viewport boundaries
-        return (
-          rect.top < window.innerHeight &&
-          rect.bottom > 0 &&
-          rect.left < window.innerWidth &&
-          rect.right > 0
-        );
+          (isInput || style.pointerEvents !== "none");
+        if (!ok) return false;
+        return rect.top < window.innerHeight && rect.bottom > 0 &&
+          rect.left < window.innerWidth && rect.right > 0;
       }
 
-      // Query broad set of selectors including contenteditable, textboxes, radios, checkboxes
       const selectors = [
-        "a", "button", "input", "textarea", "select", "iframe",
-        "[role='button']", "[role='link']", "[role='textbox']", 
-        "[role='checkbox']", "[role='radio']", "[contenteditable='true']",
-        "[onclick]"
+        "a", "button", "input", "textarea", "select",
+        "[role='button']", "[role='link']", "[role='textbox']",
+        "[role='tab']", "[role='checkbox']", "[role='radio']",
+        "[contenteditable='true']", "[onclick]",
       ];
-      
-      const allElements = document.querySelectorAll(selectors.join(","));
 
-      allElements.forEach((node) => {
+      document.querySelectorAll(selectors.join(",")).forEach((node) => {
         const el = node as HTMLElement;
-        if (isVisible(el)) {
-          // Tag element with dynamic identifier for robust backend callbacks
-          el.setAttribute("data-uxray-id", String(currentId));
-
-          // Clean text content (max 60 chars to save tokens)
-          let rawText = el.tagName.toLowerCase() === "iframe" 
-            ? `[IFRAME] ${el.getAttribute("title") || el.getAttribute("name") || "Embedded Content"}`
-            : (el.innerText || el.getAttribute("value") || el.textContent || "");
-          
-          let cleanText = rawText.trim();
-          if (cleanText.length > 60) {
-            cleanText = cleanText.substring(0, 57) + "...";
-          }
-
-          list.push({
-            id: currentId++,
-            tag: el.tagName.toLowerCase(),
-            type: el.getAttribute("type") || undefined,
-            text: cleanText || undefined,
-            placeholder: el.getAttribute("placeholder") || undefined,
-            name: el.getAttribute("name") || el.id || undefined,
-            role: el.getAttribute("role") || undefined
-          });
-        }
+        if (!isVisible(el)) return;
+        el.setAttribute("data-uxray-id", String(currentId));
+        let rawText =
+          el.tagName === "IFRAME"
+            ? `[IFRAME] ${el.getAttribute("title") || "Embedded"}`
+            : el.innerText || (el as HTMLInputElement).value || el.textContent || "";
+        let text = rawText.trim().slice(0, 60);
+        list.push({
+          id: currentId++,
+          tag: el.tagName.toLowerCase(),
+          type: el.getAttribute("type") || undefined,
+          text: text || undefined,
+          placeholder: el.getAttribute("placeholder") || undefined,
+          name: el.getAttribute("name") || el.id || undefined,
+          role: el.getAttribute("role") || undefined,
+        });
       });
 
       return list;
     });
 
-    // Populate local cache map for executing actions
     this.elementsMap.clear();
     elements.forEach((el) => {
       this.elementsMap.set(el.id, { text: el.text || el.placeholder || el.name || el.tag });
@@ -119,185 +221,144 @@ export class BrowserSimulator {
     return elements;
   }
 
-  /**
-   * Evaluates if the page is currently in a loading state.
-   * Detects: CSS class-based spinners, aria-busy, animation classes, and visible async-processing text.
-   */
+  // ── Page state detection ──────────────────────────────────────────────────
+
   async getPageState(): Promise<{ isLoaded: boolean; documentState: string; hasLoader: boolean }> {
     if (!this.page) return { isLoaded: true, documentState: "complete", hasLoader: false };
-    
     return await this.page.evaluate(() => {
       const docState = document.readyState;
       const loaderSelectors = [
         '[class*="spinner"]', '[class*="loader"]', '[class*="loading"]',
         '[role="progressbar"]', '[aria-busy="true"]',
-        'svg.animate-spin', '[class*="animate-spin"]',
-        '[class*="animate-pulse"]', '[class*="animate-bounce"]',
-        '[class*="skeleton"]'
+        'svg.animate-spin', '[class*="animate-spin"]', '[class*="skeleton"]',
       ];
       let hasLoader = false;
       for (const sel of loaderSelectors) {
         const el = document.querySelector(sel);
         if (el) {
-          const style = window.getComputedStyle(el);
-          if (style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0") {
-            hasLoader = true;
-            break;
+          const s = window.getComputedStyle(el);
+          if (s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0") {
+            hasLoader = true; break;
           }
         }
       }
       if (!hasLoader) {
-        const asyncPhrases = ["analyzing","fetching","generating","processing","loading","please wait","scanning","computing","running"];
-        const nodes = document.querySelectorAll("p,span,h1,h2,h3,h4,h5,h6,div,li");
-        for (const node of nodes) {
+        const phrases = ["analyzing","fetching","generating","processing","loading","please wait","scanning"];
+        for (const node of document.querySelectorAll("p,span,div,h1,h2,h3")) {
           const el = node as HTMLElement;
-          const rect = el.getBoundingClientRect();
-          const style = window.getComputedStyle(el);
-          const inView = rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight && rect.bottom > 0 && style.display !== "none" && style.visibility !== "hidden";
-          if (!inView) continue;
-          const text = (el.textContent || "").toLowerCase().trim();
-          if (text.length < 120 && asyncPhrases.some(p => text.includes(p))) { hasLoader = true; break; }
+          const r = el.getBoundingClientRect();
+          const s = window.getComputedStyle(el);
+          if (r.width > 0 && r.height > 0 && r.top < window.innerHeight && r.bottom > 0 &&
+              s.display !== "none" && s.visibility !== "hidden") {
+            const t = (el.textContent || "").toLowerCase().trim();
+            if (t.length < 120 && phrases.some(p => t.includes(p))) { hasLoader = true; break; }
+          }
         }
       }
       return { isLoaded: docState === "complete" && !hasLoader, documentState: docState, hasLoader };
     });
   }
 
-  /**
-   * Extracts rich visible text from the page for AI-based app recognition.
-   * Returns: title, headings, nav links, button labels, visible body text.
-   */
+  // ── Page text extraction ──────────────────────────────────────────────────
+
   async getPageText(): Promise<string> {
     if (!this.page) return "";
     return await this.page.evaluate(() => {
-      const parts: string[] = [];
+      const p: string[] = [];
       const title = document.title;
-      if (title) parts.push(`TITLE: ${title}`);
+      if (title) p.push(`TITLE: ${title}`);
       const h1s = Array.from(document.querySelectorAll("h1")).map(h => h.textContent?.trim()).filter(Boolean);
-      if (h1s.length) parts.push(`H1: ${h1s.join(" | ")}`);
-      const h2s = Array.from(document.querySelectorAll("h2")).slice(0, 5).map(h => h.textContent?.trim()).filter(Boolean);
-      if (h2s.length) parts.push(`H2: ${h2s.join(" | ")}`);
-      const navLinks = Array.from(document.querySelectorAll("nav a, header a, [role='navigation'] a")).slice(0, 15).map(a => (a as HTMLElement).textContent?.trim()).filter(Boolean);
-      if (navLinks.length) parts.push(`NAV: ${navLinks.join(", ")}`);
-      const buttons = Array.from(document.querySelectorAll("button, [role='button'], input[type='submit']")).slice(0, 10).map(b => (b as HTMLElement).textContent?.trim() || (b as HTMLInputElement).value).filter(Boolean);
-      if (buttons.length) parts.push(`BUTTONS: ${buttons.join(", ")}`);
-      const inputs = Array.from(document.querySelectorAll("input, textarea")).slice(0, 8).map(i => { const el = i as HTMLInputElement; return el.placeholder || el.getAttribute("aria-label") || el.name || el.type; }).filter(Boolean);
-      if (inputs.length) parts.push(`INPUTS: ${inputs.join(", ")}`);
-      const bodyText = (document.body.innerText || "").slice(0, 600).replace(/\s+/g, " ");
-      if (bodyText) parts.push(`CONTENT: ${bodyText}`);
-      return parts.join("\n");
+      if (h1s.length) p.push(`H1: ${h1s.join(" | ")}`);
+      const h2s = Array.from(document.querySelectorAll("h2")).slice(0, 6).map(h => h.textContent?.trim()).filter(Boolean);
+      if (h2s.length) p.push(`H2: ${h2s.join(" | ")}`);
+      const nav = Array.from(document.querySelectorAll("nav a, header a")).slice(0, 12).map(a => (a as HTMLElement).textContent?.trim()).filter(Boolean);
+      if (nav.length) p.push(`NAV: ${nav.join(", ")}`);
+      const btns = Array.from(document.querySelectorAll("button, [role=button]")).slice(0, 8).map(b => (b as HTMLElement).textContent?.trim()).filter(Boolean);
+      if (btns.length) p.push(`BUTTONS: ${btns.join(", ")}`);
+      const inputs = Array.from(document.querySelectorAll("input, textarea")).slice(0, 6).map(i => { const e = i as HTMLInputElement; return e.placeholder || e.getAttribute("aria-label") || e.name || e.type; }).filter(Boolean);
+      if (inputs.length) p.push(`INPUTS: ${inputs.join(", ")}`);
+      p.push(`CONTENT: ${(document.body.innerText || "").slice(0, 500).replace(/\s+/g, " ")}`);
+      return p.join("\n");
     });
   }
 
-  /**
-   * Helper to scroll element to center and retrieve fresh viewport-relative coordinates
-   */
-  private async getFreshCoordinates(id: number): Promise<{ x: number; y: number } | null> {
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  private async getFreshCoords(id: number): Promise<{ x: number; y: number } | null> {
     if (!this.page) return null;
     return await this.page.evaluate((targetId) => {
       const el = document.querySelector(`[data-uxray-id="${targetId}"]`) as HTMLElement;
-      if (el) {
-        // Scroll element to center smoothly
-        el.scrollIntoView({ block: "center", inline: "center" });
-        const rect = el.getBoundingClientRect();
-        return {
-          x: rect.left + rect.width / 2,
-          y: rect.top + rect.height / 2
-        };
-      }
-      return null;
+      if (!el) return null;
+      el.scrollIntoView({ block: "center", inline: "center" });
+      const rect = el.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     }, id);
   }
 
   async click(id: number): Promise<string> {
     if (!this.page) throw new Error("Browser not initialized.");
-    
-    // Get fresh coordinates after scroll-to-center
-    const coords = await this.getFreshCoordinates(id);
-    if (!coords) throw new Error(`Element with ID ${id} not found in DOM.`);
-
-    const cached = this.elementsMap.get(id);
-
-    // Perform exact click at coordinates
+    const coords = await this.getFreshCoords(id);
+    if (!coords) throw new Error(`Element ${id} not found.`);
     await this.page.mouse.click(coords.x, coords.y);
     await this.page.waitForTimeout(1500);
-    
-    return cached?.text || "element clicked";
+    return this.elementsMap.get(id)?.text || "element clicked";
   }
 
   async type(id: number, text: string): Promise<string> {
     if (!this.page) throw new Error("Browser not initialized.");
-    
-    // Get fresh coordinates after scroll-to-center
-    const coords = await this.getFreshCoordinates(id);
-    if (!coords) throw new Error(`Element with ID ${id} not found in DOM.`);
-
-    const cached = this.elementsMap.get(id);
-
-    // Click input to focus
+    const coords = await this.getFreshCoords(id);
+    if (!coords) throw new Error(`Element ${id} not found.`);
     await this.page.mouse.click(coords.x, coords.y);
-    await this.page.waitForTimeout(200);
-    
-    // Select all and delete to clear existing text
+    await this.page.waitForTimeout(150);
     await this.page.keyboard.down("ControlOrMeta");
     await this.page.keyboard.press("a");
     await this.page.keyboard.up("ControlOrMeta");
     await this.page.keyboard.press("Backspace");
+    await this.page.keyboard.type(text, { delay: 40 });
+    await this.page.waitForTimeout(500);
+    return `${this.elementsMap.get(id)?.text || "input"} ← "${text}"`;
+  }
 
-    await this.page.keyboard.type(text, { delay: 50 });
-    await this.page.keyboard.press("Enter");
-    await this.page.waitForTimeout(1000);
-    
-    return `${cached?.text || "input"} (typed: "${text}")`;
+  // Type without pressing Enter — for multi-field forms
+  async typeOnly(id: number, text: string): Promise<string> {
+    if (!this.page) throw new Error("Browser not initialized.");
+    const coords = await this.getFreshCoords(id);
+    if (!coords) throw new Error(`Element ${id} not found.`);
+    await this.page.mouse.click(coords.x, coords.y);
+    await this.page.waitForTimeout(150);
+    await this.page.keyboard.down("ControlOrMeta");
+    await this.page.keyboard.press("a");
+    await this.page.keyboard.up("ControlOrMeta");
+    await this.page.keyboard.press("Backspace");
+    await this.page.keyboard.type(text, { delay: 40 });
+    await this.page.waitForTimeout(300);
+    return `${this.elementsMap.get(id)?.text || "input"} ← "${text}"`;
   }
 
   async scroll(): Promise<string> {
     if (!this.page) throw new Error("Browser not initialized.");
-    await this.page.evaluate(() => {
-      window.scrollBy({ top: 350, behavior: "smooth" });
-    });
-    await this.page.waitForTimeout(1000);
-    return "page scrolled down";
+    await this.page.evaluate(() => window.scrollBy({ top: 350, behavior: "smooth" }));
+    await this.page.waitForTimeout(800);
+    return "scrolled down";
   }
 
-  /**
-   * Dynamic wait: polls page loading state every second.
-   * Reports exactly how long it waited and whether loading was active.
-   * Waits up to maxSeconds (default 30) for any active loading to complete.
-   */
-  async wait(maxSeconds: number = 30): Promise<string> {
+  async wait(maxSeconds = 30): Promise<string> {
     if (!this.page) throw new Error("Browser not initialized.");
-
-    const pollIntervalMs = 1000;
     let elapsed = 0;
     let wasLoading = false;
-
     while (elapsed < maxSeconds) {
       const state = await this.getPageState();
-
       if (!state.isLoaded) {
-        // Page is actively loading — record that we detected it
         wasLoading = true;
-        await this.page.waitForTimeout(pollIntervalMs);
+        await this.page.waitForTimeout(1000);
         elapsed++;
         continue;
       }
-
-      // Page is now idle — stop waiting
       break;
     }
-
-    if (wasLoading) {
-      return `waited ${elapsed} second${elapsed !== 1 ? "s" : ""} for loading state to complete`;
-    } else {
-      // Page was already idle when wait() was called — still waited a short beat
-      await this.page.waitForTimeout(pollIntervalMs);
-      return `waited 1 second (page was already fully loaded)`;
-    }
-  }
-
-  async getCurrentUrl(): Promise<string> {
-    return this.page?.url() || "";
+    if (wasLoading) return `waited ${elapsed}s for loading to complete`;
+    await this.page.waitForTimeout(1000);
+    return "waited 1s (page was ready)";
   }
 
   async screenshotBase64(): Promise<string> {
@@ -311,8 +372,6 @@ export class BrowserSimulator {
       if (this.page) await this.page.close();
       if (this.context) await this.context.close();
       if (this.browser) await this.browser.close();
-    } catch (e) {
-      console.error("Playwright cleanup error:", e);
-    }
+    } catch {}
   }
 }
