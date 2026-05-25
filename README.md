@@ -1,6 +1,13 @@
-<div align="center">
-  <img src="https://via.placeholder.com/1200x400/09090b/a855f7?text=UX-Ray+-+Automated+AI+User+Testing" alt="UX-Ray Banner" />
+---
+title: UX-Ray AI QA Agent
+emoji: ⚡
+colorFrom: purple
+colorTo: indigo
+sdk: docker
+pinned: false
+---
 
+<div align="center">
   <h1>⚡ UX-Ray</h1>
   <p><strong>Autonomous AI QA Agent & User Testing Simulator</strong></p>
 
