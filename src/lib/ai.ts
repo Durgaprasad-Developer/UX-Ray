@@ -209,6 +209,7 @@ export async function getAgentDecision(params: {
   appProfile: AppProfile;
   history: Array<{ action: string; target?: string }>;
   visitedUrls: string[];
+  typedElementIds?: number[];
 }): Promise<{ thought: string; action: QueueItem }> {
   const { scan, appProfile, history, visitedUrls } = params;
 
@@ -222,7 +223,8 @@ export async function getAgentDecision(params: {
 
   const historyText = history.slice(-12).map(h => `[${h.action}] ${h.target || "—"}`).join("\n") || "No prior actions";
 
-  const elements = scan.elements.slice(0, 50);
+  const typedIds = params.typedElementIds || [];
+  const elements = scan.elements.filter(e => !typedIds.includes(e.id)).slice(0, 50);
 
   const system = `You are an autonomous AI QA Agent testing a web app. You act exactly like a meticulous senior developer doing a deep-dive QA session.
 You observe the screen, think about what needs testing, and take ONE ACTION at a time.

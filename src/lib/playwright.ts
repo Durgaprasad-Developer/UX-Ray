@@ -341,7 +341,7 @@ export class BrowserSimulator {
     await this.page.keyboard.type(text, { delay: 40 });
     await this.waitForLoaders();
     await this.page.waitForTimeout(500);
-    return `${this.elementsMap.get(id)?.text || "input"} ← "${text}"`;
+    return text;
   }
 
   // Type without pressing Enter — for multi-field forms
@@ -358,7 +358,7 @@ export class BrowserSimulator {
     await this.page.keyboard.type(text, { delay: 40 });
     await this.waitForLoaders();
     await this.page.waitForTimeout(300);
-    return `${this.elementsMap.get(id)?.text || "input"} ← "${text}"`;
+    return text;
   }
 
   async scroll(): Promise<string> {

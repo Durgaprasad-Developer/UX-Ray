@@ -77,6 +77,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         // ── Phase 2: Autonomous Agentic Exploration ─────────────────────────────
         let isDone = false;
         let lastBuiltForUrl = "";
+        const typedElementIds = new Set<number>();
 
         while (!isDone && totalSteps < MAX_TOTAL_STEPS && pagesVisited < MAX_PAGES) {
           const currentUrl = await simulator.getCurrentUrl();
@@ -86,6 +87,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
             send("log", { message: `📄 Now testing: ${currentUrl}` });
             if (!visitedUrls.includes(currentUrl)) visitedUrls.push(currentUrl);
             lastBuiltForUrl = currentUrl;
+            typedElementIds.clear();
           }
 
           let decision: { thought: string; action: QueueItem } | null = null;
@@ -106,6 +108,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
               appProfile: appProfile!,
               history: history.map(h => ({ action: h.action, target: h.target || undefined })),
               visitedUrls,
+              typedElementIds: Array.from(typedElementIds),
             });
 
             if (decision.thought) {
@@ -162,10 +165,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
             if (item.type === "type" && "elementId" in item && "value" in item) {
               const val = await simulator.type(item.elementId, item.value);
               targetText = `[${elInfo}] <- "${val}"`;
+              typedElementIds.add(item.elementId);
             } else if (item.type === "typeOnly" && "elementId" in item && "value" in item) {
               const val = await simulator.typeOnly(item.elementId, item.value);
               targetText = `[${elInfo}] <- "${val}"`;
               actionName = "type";
+              typedElementIds.add(item.elementId);
             } else if (item.type === "click" && "elementId" in item) {
               const val = await simulator.click(item.elementId);
               targetText = `[${elInfo}] ${val}`;
