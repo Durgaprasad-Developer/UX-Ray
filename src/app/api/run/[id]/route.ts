@@ -28,8 +28,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       let appProfile: AppProfile | undefined;
       let credentials: { username?: string; password?: string } | null = null;
       let totalSteps = 0;
-      const MAX_TOTAL_STEPS = 25;
-      const MAX_PAGES = 5;
+      const MAX_TOTAL_STEPS = 40;
+      const MAX_PAGES = 8;
       let pagesVisited = 0;
 
       try {

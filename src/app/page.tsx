@@ -6,30 +6,20 @@ import { ArrowRight, Sparkles, AlertCircle, ScanSearch, Lock, ChevronDown, Chevr
 
 const PRESETS = [
   {
-    label: "🔮 Full Site Audit",
-    desc: "Visit every page, test every feature, map complete user journey",
+    label: "🚀 End-to-End Journey",
+    desc: "Complete site audit covering navigation, forms, and core features.",
     value: "Conduct a complete audit of this website. Visit every page in the navigation, test every button and form, try the core feature end-to-end, and map the full user journey from landing to conversion."
   },
   {
-    label: "🚀 Onboarding Flow",
-    desc: "Go through signup/login/onboarding as a brand new user",
-    value: "Simulate a brand new user going through the signup and onboarding process. Find the signup button, create an account, and complete any onboarding steps. Note every friction point."
+    label: "🔍 Aggressive QA Tester",
+    desc: "Actively try to break flows and find confusing UX/UI edge cases.",
+    value: "You are hunting for UX problems and edge cases. Be highly critical. Submit forms with edge-case data, find confusing labels, unhelpful error messages, hidden buttons, and points where users would get stuck."
   },
   {
-    label: "💡 Feature Discovery",
-    desc: "Can users find and understand all features without a guide?",
-    value: "Explore every feature this app offers. Navigate through all sections, try every interactive element, and evaluate whether features are discoverable and understandable without any documentation."
-  },
-  {
-    label: "📊 Conversion Path",
-    desc: "Test the path from landing page to signup or purchase",
-    value: "You are a potential customer evaluating this product. Read the value proposition, check pricing, look for social proof, and try to complete the primary conversion action (signup, purchase, or CTA)."
-  },
-  {
-    label: "🔍 Friction Hunter",
-    desc: "Actively find every confusing, broken, or frustrating thing",
-    value: "You are hunting for UX problems. Be critical. Find every confusing label, unhelpful error message, hidden button, unclear copy, and point where users would give up. Be specific and harsh."
-  },
+    label: "🛒 Conversion Flow",
+    desc: "Test the exact path a new user takes to sign up or purchase.",
+    value: "Simulate a brand new user going through the signup and conversion process. Find the primary CTA, create an account, complete onboarding, and evaluate if the conversion funnel is clear."
+  }
 ];
 
 export default function Home() {
