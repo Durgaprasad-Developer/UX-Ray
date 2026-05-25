@@ -43,7 +43,7 @@ export class BrowserSimulator {
 
   async navigate(url: string) {
     if (!this.page) throw new Error("Browser not initialized.");
-    await this.page.goto(url, { waitUntil: "networkidle", timeout: 25000 });
+    await this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => {});
   }
 
   async getCurrentUrl(): Promise<string> {

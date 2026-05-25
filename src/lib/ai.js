@@ -69,14 +69,12 @@ function extractArray(text) {
     return "[]";
 }
 // ── Smart typing values ───────────────────────────────────────────────────────
-function inferSmartTypingValue(el, url, appProfile) {
+function inferSmartTypingValue(el, url, appProfile, credentials) {
     var hint = [el.placeholder || "", el.name || "", el.text || "", el.type || ""].join(" ").toLowerCase();
-    if (/github|username|handle/.test(hint) || /github/.test(url))
-        return "torvalds";
-    if (/email|e-mail/.test(hint) || el.type === "email")
-        return "tester@example.com";
+    if (/github|username|handle|email|e-mail/.test(hint) || el.type === "email")
+        return (credentials === null || credentials === void 0 ? void 0 : credentials.username) || "tester@example.com";
     if (/password|passwd/.test(hint) || el.type === "password")
-        return "TestPass123!";
+        return (credentials === null || credentials === void 0 ? void 0 : credentials.password) || "TestPass123!";
     if (/search|query|find|keyword/.test(hint) || el.type === "search") {
         var at = ((appProfile === null || appProfile === void 0 ? void 0 : appProfile.appType) || "").toLowerCase();
         if (/job|career/.test(at))
@@ -158,39 +156,54 @@ function callNvidia(system_1, user_1) {
     });
 }
 // ── Gemini multimodal (screenshots only, for UX report) ──────────────────────
-function callGeminiMultimodal(parts, system) {
-    return __awaiter(this, void 0, void 0, function () {
-        var _i, _a, model, m, r, text, e_2;
-        var _b, _c;
-        return __generator(this, function (_d) {
-            switch (_d.label) {
+function callGeminiMultimodal(parts_1, system_1) {
+    return __awaiter(this, arguments, void 0, function (parts, system, retries) {
+        var lastError, i, _i, _a, model, m, r, text, e_2;
+        var _b, _c, _d;
+        if (retries === void 0) { retries = 3; }
+        return __generator(this, function (_e) {
+            switch (_e.label) {
                 case 0:
                     if (!GEMINI_KEY)
                         throw new Error("no GEMINI_API_KEY");
-                    _i = 0, _a = ["gemini-2.0-flash", "gemini-1.5-flash"];
-                    _d.label = 1;
+                    lastError = null;
+                    i = 0;
+                    _e.label = 1;
                 case 1:
-                    if (!(_i < _a.length)) return [3 /*break*/, 6];
-                    model = _a[_i];
-                    _d.label = 2;
+                    if (!(i < retries)) return [3 /*break*/, 10];
+                    _i = 0, _a = ["gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"];
+                    _e.label = 2;
                 case 2:
-                    _d.trys.push([2, 4, , 5]);
+                    if (!(_i < _a.length)) return [3 /*break*/, 9];
+                    model = _a[_i];
+                    _e.label = 3;
+                case 3:
+                    _e.trys.push([3, 5, , 8]);
                     m = ai.getGenerativeModel({ model: model, systemInstruction: system, generationConfig: { responseMimeType: "application/json" } });
                     return [4 /*yield*/, m.generateContent(parts)];
-                case 3:
-                    r = _d.sent();
+                case 4:
+                    r = _e.sent();
                     text = (_b = r.response.text()) === null || _b === void 0 ? void 0 : _b.trim();
                     if (text)
                         return [2 /*return*/, text];
-                    return [3 /*break*/, 5];
-                case 4:
-                    e_2 = _d.sent();
-                    console.warn("[Gemini] ".concat(model, ": ").concat((e_2 === null || e_2 === void 0 ? void 0 : e_2.status) || ((_c = e_2 === null || e_2 === void 0 ? void 0 : e_2.message) === null || _c === void 0 ? void 0 : _c.slice(0, 40))));
-                    return [3 /*break*/, 5];
+                    return [3 /*break*/, 8];
                 case 5:
+                    e_2 = _e.sent();
+                    lastError = e_2;
+                    console.warn("[Gemini] ".concat(model, ": ").concat((e_2 === null || e_2 === void 0 ? void 0 : e_2.status) || ((_c = e_2 === null || e_2 === void 0 ? void 0 : e_2.message) === null || _c === void 0 ? void 0 : _c.slice(0, 40))));
+                    if (!((e_2 === null || e_2 === void 0 ? void 0 : e_2.status) === 429 || ((_d = e_2 === null || e_2 === void 0 ? void 0 : e_2.message) === null || _d === void 0 ? void 0 : _d.includes('429')))) return [3 /*break*/, 7];
+                    return [4 /*yield*/, new Promise(function (res) { return setTimeout(res, 2000); })];
+                case 6:
+                    _e.sent();
+                    _e.label = 7;
+                case 7: return [3 /*break*/, 8];
+                case 8:
                     _i++;
+                    return [3 /*break*/, 2];
+                case 9:
+                    i++;
                     return [3 /*break*/, 1];
-                case 6: throw new Error("Gemini unavailable");
+                case 10: throw lastError || new Error("Gemini unavailable");
             }
         });
     });
@@ -198,13 +211,13 @@ function callGeminiMultimodal(parts, system) {
 // ── 1. App Recognizer ─────────────────────────────────────────────────────────
 function recognizeApp(params) {
     return __awaiter(this, void 0, void 0, function () {
-        var url, description, pageText, system, user, _a, _b, _c, _d;
+        var url, description, pageText, userObjective, system, user, _a, _b, _c, _d;
         return __generator(this, function (_e) {
             switch (_e.label) {
                 case 0:
-                    url = params.url, description = params.description, pageText = params.pageText;
+                    url = params.url, description = params.description, pageText = params.pageText, userObjective = params.userObjective;
                     system = "You are a senior UX researcher. Analyze this web app and return ONLY JSON:\n{\n  \"appType\": \"<specific type: github-analyzer|saas-landing|ecommerce|developer-tool|portfolio|job-board|form-tool|waitlist>\",\n  \"primaryGoal\": \"<what a real user opens this to accomplish>\",\n  \"expectedUserActions\": [\"<step 1>\",\"<step 2>\",\"<step 3>\"],\n  \"sensitiveFields\": [\"<github_username|email|search_query|etc>\"],\n  \"testingPlan\": \"<2-3 sentence systematic plan covering all pages and key flows to test>\",\n  \"audiencePersona\": \"<who uses this, specific>\",\n  \"requiresAuth\": <true|false>,\n  \"navigationPages\": [\"<page 1>\",\"<page 2>\",\"<all pages in nav>\"]\n}";
-                    user = "URL: ".concat(url, "\nDescription: ").concat(description, "\n\nLive page content:\n").concat(pageText);
+                    user = "URL: ".concat(url, "\nDescription: ").concat(description, "\nUSER OBJECTIVE (THEIR GOAL): ").concat(userObjective || 'Explore the app', "\n\nLive page content:\n").concat(pageText);
                     _e.label = 1;
                 case 1:
                     _e.trys.push([1, 3, , 4]);
@@ -233,11 +246,11 @@ function recognizeApp(params) {
 // Called at every step. The agent observes the LIVE page state, checks history, and picks the SINGLE next best action.
 function getAgentDecision(params) {
     return __awaiter(this, void 0, void 0, function () {
-        var scan, appProfile, history, visitedUrls, formsText, tabsText, historyText, elements, system, user, text, result_1, el, err_1;
+        var scan, appProfile, history, visitedUrls, credentials, userObjective, annotatedScreenshot, formsText, tabsText, historyText, typedIds, elements, system, user, parts, text, result_1, el, err_1;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
-                    scan = params.scan, appProfile = params.appProfile, history = params.history, visitedUrls = params.visitedUrls;
+                    scan = params.scan, appProfile = params.appProfile, history = params.history, visitedUrls = params.visitedUrls, credentials = params.credentials, userObjective = params.userObjective, annotatedScreenshot = params.annotatedScreenshot;
                     formsText = scan.forms.length > 0
                         ? scan.forms.map(function (f, i) { return "Form ".concat(i + 1, " (").concat(f.purpose, "): inputs=").concat(JSON.stringify(f.inputIds), ", submit=").concat(f.submitId); }).join("\n")
                         : "No forms detected";
@@ -245,13 +258,26 @@ function getAgentDecision(params) {
                         ? scan.tabGroups.map(function (t) { return "TabGroup (".concat(t.purpose, "): tabIds=").concat(JSON.stringify(t.tabIds)); }).join("\n")
                         : "No tab groups detected";
                     historyText = history.slice(-12).map(function (h) { return "[".concat(h.action, "] ").concat(h.target || "—"); }).join("\n") || "No prior actions";
-                    elements = scan.elements.slice(0, 40);
-                    system = "You are an autonomous AI QA Agent testing a web app. You act exactly like a meticulous senior developer doing a deep-dive QA session.\nYou observe the screen, think about what needs testing, and take ONE ACTION at a time.\n\nApp: ".concat(appProfile.appType, " | Audience: ").concat(appProfile.audiencePersona, "\nGoal: ").concat(appProfile.primaryGoal, "\n\nCURRENT PAGE: ").concat(scan.currentUrl, "\n").concat(scan.pageText.slice(0, 400), "\n\nPAGE STRUCTURE:\n").concat(formsText, "\n").concat(tabsText, "\nAll visible interactable elements (id, tag, text/placeholder/type):\n").concat(JSON.stringify(elements.map(function (e) { var _a, _b; return ({ id: e.id, tag: e.tag, t: ((_a = e.text) === null || _a === void 0 ? void 0 : _a.slice(0, 40)) || ((_b = e.placeholder) === null || _b === void 0 ? void 0 : _b.slice(0, 40)) || e.type }); })), "\n\nRECENT HISTORY (What you just did):\n").concat(historyText, "\n\nVisited URLs: ").concat(visitedUrls.join(", ") || "none", "\n\nRULES FOR DEEP TESTING:\n1. STRICT SEQUENCE: If you just filled a form input (type action), your very next action MUST be to click the corresponding submit button or CTA. Do NOT type another value into the same input.\n2. If you just clicked a submit button or CTA, your next action MUST be \"wait\" to let the backend process and the UI update.\n3. If you see a tab group you haven't clicked yet, click one of the unvisited tabs to test its content.\n4. If you see inputs, fill them with realistic data ONCE.\n5. STRICT ANTI-LOOP: You MUST NOT repeat an action on the same element you see in your RECENT HISTORY. If you find yourself doing the same thing, choose \"navigate\" (click a nav link) or return \"done\".\n6. Return ONLY JSON.\n\nReturn format:\n{\n  \"thought\": \"<1 sentence reasoning why you are doing this>\",\n  \"action\": { \"type\": \"type\"|\"click\"|\"wait\"|\"scroll\"|\"done\", \"elementId\": <number>, \"value\": \"<if type>\", \"purpose\": \"<short label>\" }\n}\nFor \"done\", action should be: { \"type\": \"done\", \"summary\": \"<reason>\" }");
-                    user = "Observe the state and history. Decide the single best next action. Return JSON.";
+                    typedIds = params.typedElementIds || [];
+                    elements = scan.elements.filter(function (e) { return !typedIds.includes(e.id); }).slice(0, 50);
+                    system = "You are an autonomous AI Vision Agent testing a web app. You act exactly like a meticulous senior developer doing a deep-dive QA session.\nYou have been provided with an annotated screenshot of the current page. Every interactable element is overlaid with a red numeric bounding box (e.g. [14], [45]).\nYou observe the screen visually, cross-reference the bounding box IDs with the text list below, think about what needs testing, and take ONE ACTION at a time by outputting the ID of the box you wish to interact with.\n\nApp: ".concat(appProfile.appType, " | Audience: ").concat(appProfile.audiencePersona, "\nGoal: ").concat(appProfile.primaryGoal, "\nUSER OBJECTIVE: ").concat(userObjective || 'Generic testing', "\nTESTING PLAN: ").concat(appProfile.testingPlan, "\n").concat(credentials ? "\nPROVIDED CREDENTIALS (YOU MUST USE THESE WHEN TYPING): Username/Email: \"".concat(credentials.username || '', "\" | Password: \"").concat(credentials.password || '', "\"") : "", "\n\nCURRENT PAGE: ").concat(scan.currentUrl, "\n").concat(scan.pageText.slice(0, 400), "\n\nPAGE STRUCTURE:\n").concat(formsText, "\n").concat(tabsText, "\nInteractable Elements mapping (cross-reference these IDs with the red boxes on the image):\n").concat(JSON.stringify(elements.map(function (e) {
+                        var _a, _b, _c;
+                        return ({
+                            id: e.id,
+                            tag: e.tag,
+                            t: ((_a = e.text) === null || _a === void 0 ? void 0 : _a.slice(0, 40)) || ((_b = e.placeholder) === null || _b === void 0 ? void 0 : _b.slice(0, 40)) || ((_c = e.ariaLabel) === null || _c === void 0 ? void 0 : _c.slice(0, 20)),
+                            disabled: e.disabled ? true : undefined
+                        });
+                    })), "\n\nRECENT HISTORY (What you just did):\n").concat(historyText, "\n\nVisited URLs: ").concat(visitedUrls.join(", ") || "none", "\n\nDYNAMIC SITUATIONAL REASONING:\nYou must dynamically adapt to the situation visually instead of following static robotic rules:\n- DYNAMIC ADAPTATION: If your last action failed or didn't change the page, do NOT repeat it. Look at the image, think about why it failed, and adapt your strategy.\n- POPUPS & OVERLAYS: If you visually see a cookie banner, newsletter, or modal blocking the screen, you must immediately dismiss or interact with it before doing anything else.\n- INTELLIGENT EXPLORATION: Use the \"scroll\" action if you need to find more content. Use your visual intuition to decide which buttons are primary CTAs.\n- OBJECTIVE FOCUS: Above all, every action you take must actively and intelligently advance the USER OBJECTIVE and TESTING PLAN.\n- Return ONLY JSON.\n\nReturn format:\n{\n  \"observation\": \"<What do you see on the screenshot right now? Did your last action succeed? Is there a popup blocking the screen?>\",\n  \"thought\": \"<Based on your visual observation, what is your 1-sentence strategy?>\",\n  \"action\": { \"type\": \"type\"|\"click\"|\"wait\"|\"scroll\"|\"done\", \"elementId\": <number_from_red_box>, \"value\": \"<if type>\", \"purpose\": \"<short label>\" }\n}\nFor \"done\", action should be: { \"type\": \"done\", \"summary\": \"<reason>\" }");
+                    user = "Observe the annotated screenshot and history. Write your visual observation and thought. Decide the single best next action by choosing a numeric ID. Return JSON.";
                     _a.label = 1;
                 case 1:
                     _a.trys.push([1, 3, , 4]);
-                    return [4 /*yield*/, callNvidia(system, user, 600)];
+                    parts = [
+                        { text: user },
+                        { inlineData: { mimeType: "image/jpeg", data: annotatedScreenshot } }
+                    ];
+                    return [4 /*yield*/, callGeminiMultimodal(parts, system)];
                 case 2:
                     text = _a.sent();
                     result_1 = JSON.parse(extractJSON(text));
@@ -261,14 +287,14 @@ function getAgentDecision(params) {
                     if (result_1.action.type === "type" && result_1.action.elementId) {
                         el = scan.elements.find(function (e) { return e.id === result_1.action.elementId; });
                         if (el && (!result_1.action.value || result_1.action.value === "")) {
-                            result_1.action.value = inferSmartTypingValue(el, scan.currentUrl, appProfile);
+                            result_1.action.value = inferSmartTypingValue(el, scan.currentUrl, appProfile, credentials);
                         }
                     }
                     return [2 /*return*/, result_1];
                 case 3:
                     err_1 = _a.sent();
                     console.warn("[Agent] Failed, returning fallback done:", err_1);
-                    return [2 /*return*/, { thought: "Error communicating with intelligence engine.", action: { type: "done", summary: "API failure" } }];
+                    return [2 /*return*/, { observation: "System error", thought: "Error communicating with intelligence engine.", action: { type: "done", summary: "API failure" } }];
                 case 4: return [2 /*return*/];
             }
         });
@@ -277,18 +303,18 @@ function getAgentDecision(params) {
 // ── 3. UX Report ──────────────────────────────────────────────────────────────
 function generateUXReport(params) {
     return __awaiter(this, void 0, void 0, function () {
-        var url, description, appProfile, timeline, screenshots, timelineText, appCtx, system, user, parts_1, _a, _b, _c, _d, _e, _f, _g, err_2;
+        var url, description, prompt, appProfile, timeline, screenshots, timelineText, appCtx, system, user, parts_1, _a, _b, _c, _d, _e, _f, _g, err_2;
         return __generator(this, function (_h) {
             switch (_h.label) {
                 case 0:
-                    url = params.url, description = params.description, appProfile = params.appProfile, timeline = params.timeline, screenshots = params.screenshots;
+                    url = params.url, description = params.description, prompt = params.prompt, appProfile = params.appProfile, timeline = params.timeline, screenshots = params.screenshots;
                     timelineText = timeline.slice(0, 15).map(function (t) {
                         return "[".concat(t.timestamp, "s] ").concat(t.action, ": ").concat((t.target || "").slice(0, 60));
                     }).join("\n");
                     appCtx = appProfile
                         ? "Type: ".concat(appProfile.appType, " | Audience: ").concat(appProfile.audiencePersona, " | Goal: ").concat(appProfile.primaryGoal)
                         : description;
-                    system = "You are a simulation of 1000 real first-time users testing a startup's web app before it is published. You are providing honest, specific feedback directly to the developer based on their actual product.\n\n".concat(appCtx, " | URL: ").concat(url, "\n\nIMPORTANT \u2014 This is a UX analysis of the WEBSITE. Do not penalize the website if the simulation bot clicked the wrong thing or encountered automation errors. Filter out automation noise and focus strictly on the app's actual design quality, clarity, flows, and feature completeness.\n\nThink like a developer reviewing user sessions. What do they need to fix before launching to 1000 users? Be specific \u2014 reference real UI elements, copy, and flows you observed.\n\nInclude in behaviourPatterns: what users naturally try to do (even things the app doesn't support yet, based on your intuition of the product).\nInclude in featureSuggestions: 2-3 features users clearly want based on their behaviour.\n\nReturn ONLY this JSON:\n{\n  \"summary\": \"<2-3 sentence honest verdict as a representative for 1000 users>\",\n  \"whatWorkedWell\": [\"<specific strength with exact UI context>\",\"<another>\",\"<another>\"],\n  \"frictionPoints\": [\"<specific pain point real users would feel>\",\"<another>\",\"<another>\"],\n  \"improvements\": [\"<general area to improve>\",\"<another>\"],\n  \"behaviourPatterns\": [\"<observed pattern>\",\"<pattern>\"],\n  \"featureSuggestions\": [\"<feature users clearly want>\",\"<another>\"]\n}");
+                    system = "You are a Senior UX/UI Engineer and accessibility expert analyzing a startup's web application. You are evaluating the app against Nielsen's 10 Usability Heuristics and modern design standards (WCAG, visual hierarchy, spacing).\n\n".concat(appCtx, " | URL: ").concat(url, "\nUSER OBJECTIVE FOR THIS TEST: ").concat(prompt || 'General UX Evaluation', "\n\nIMPORTANT: Filter out any bot automation noise (e.g. if the bot clicked the wrong element). Focus STRICTLY on whether the UI/UX successfully served the USER OBJECTIVE.\n\nYour job is to provide HIGHLY ACTIONABLE, developer-ready feedback tailored to this objective. Do not give generic advice like \"make it look better\" or \"improve instructions\".\nInstead, provide exact, technical UI/UX fixes:\n- \"Increase the contrast ratio of the secondary button in the header from #555 to #333 for accessibility.\"\n- \"Add a 24px margin-bottom to the form groups to improve visual separation.\"\n- \"The 'Submit' button is visually lost; change its background to a primary brand color and add a hover state.\"\n\nInclude in behaviourPatterns: What users naturally try to do (even things the app doesn't support yet, based on your intuition).\nInclude in featureSuggestions: 2-3 features users clearly want based on their behaviour.\n\nReturn ONLY this JSON:\n{\n  \"summary\": \"<2-3 sentence honest verdict as a Senior UX Engineer>\",\n  \"whatWorkedWell\": [\"<specific UI/UX strength with exact element context>\",\"<another>\",\"<another>\"],\n  \"frictionPoints\": [\"<specific heuristic violation or UI pain point>\",\"<another>\",\"<another>\"],\n  \"improvements\": [\"<exact, technical developer-ready fix (e.g. CSS, layout, copy)>\",\"<another>\"],\n  \"behaviourPatterns\": [\"<observed pattern>\",\"<pattern>\"],\n  \"featureSuggestions\": [\"<feature users clearly want>\",\"<another>\"]\n}");
                     user = "Test timeline:\n".concat(timelineText, "\n\nAnalyze the site's UX quality and return the report JSON.");
                     _h.label = 1;
                 case 1:

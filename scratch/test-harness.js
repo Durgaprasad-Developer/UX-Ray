@@ -67,7 +67,7 @@ function main() {
                     };
                     steps = 0;
                     _loop_1 = function () {
-                        var scan, decision, action_1, elInfo, el, targetText, val, err_1;
+                        var scan, annotatedScreenshot, decision, action_1, elInfo, el, targetText, val, err_1;
                         return __generator(this, function (_b) {
                             switch (_b.label) {
                                 case 0:
@@ -79,10 +79,14 @@ function main() {
                                     console.log("Scan: ".concat(scan.elements.length, " elements, ").concat(scan.forms.length, " forms, ").concat(scan.tabGroups.length, " tabs"));
                                     _b.label = 2;
                                 case 2:
-                                    _b.trys.push([2, 11, , 12]);
-                                    return [4 /*yield*/, (0, ai_1.getAgentDecision)({ scan: scan, appProfile: appProfile, history: history, visitedUrls: visitedUrls })];
+                                    _b.trys.push([2, 12, , 13]);
+                                    return [4 /*yield*/, simulator.getAnnotatedScreenshot()];
                                 case 3:
+                                    annotatedScreenshot = _b.sent();
+                                    return [4 /*yield*/, (0, ai_1.getAgentDecision)({ scan: scan, appProfile: appProfile, history: history, visitedUrls: visitedUrls, annotatedScreenshot: annotatedScreenshot })];
+                                case 4:
                                     decision = _b.sent();
+                                    console.log("\uD83D\uDC40 OBSERVATION: ".concat(decision.observation));
                                     console.log("\uD83D\uDCA1 THOUGHT: ".concat(decision.thought));
                                     action_1 = decision.action;
                                     console.log("\uD83C\uDFC3 ACTION:", action_1);
@@ -97,40 +101,40 @@ function main() {
                                             elInfo = el.placeholder || el.name || el.tag || String(action_1.elementId);
                                     }
                                     targetText = "";
-                                    if (!(action_1.type === "type" && "elementId" in action_1 && "value" in action_1)) return [3 /*break*/, 5];
+                                    if (!(action_1.type === "type" && "elementId" in action_1 && "value" in action_1)) return [3 /*break*/, 6];
                                     return [4 /*yield*/, simulator.type(action_1.elementId, action_1.value)];
-                                case 4:
+                                case 5:
                                     val = _b.sent();
                                     targetText = "[".concat(elInfo, "] <- \"").concat(val, "\"");
-                                    return [3 /*break*/, 9];
-                                case 5:
-                                    if (!(action_1.type === "click" && "elementId" in action_1)) return [3 /*break*/, 7];
+                                    return [3 /*break*/, 10];
+                                case 6:
+                                    if (!(action_1.type === "click" && "elementId" in action_1)) return [3 /*break*/, 8];
                                     targetText = "[".concat(elInfo, "] click");
                                     return [4 /*yield*/, simulator.click(action_1.elementId)];
-                                case 6:
-                                    _b.sent();
-                                    return [3 /*break*/, 9];
                                 case 7:
-                                    if (!(action_1.type === "wait")) return [3 /*break*/, 9];
+                                    _b.sent();
+                                    return [3 /*break*/, 10];
+                                case 8:
+                                    if (!(action_1.type === "wait")) return [3 /*break*/, 10];
                                     targetText = "wait";
                                     return [4 /*yield*/, simulator.wait()];
-                                case 8:
-                                    _b.sent();
-                                    _b.label = 9;
                                 case 9:
+                                    _b.sent();
+                                    _b.label = 10;
+                                case 10:
                                     console.log("\u2705 EXECUTED: ".concat(targetText));
                                     history.push({ action: action_1.type, target: targetText });
                                     // Wait a moment for page updates
                                     return [4 /*yield*/, new Promise(function (r) { return setTimeout(r, 2000); })];
-                                case 10:
+                                case 11:
                                     // Wait a moment for page updates
                                     _b.sent();
-                                    return [3 /*break*/, 12];
-                                case 11:
+                                    return [3 /*break*/, 13];
+                                case 12:
                                     err_1 = _b.sent();
                                     console.error("\u274C Error in step ".concat(steps, ":"), err_1.message);
-                                    return [3 /*break*/, 12];
-                                case 12: return [2 /*return*/];
+                                    return [3 /*break*/, 13];
+                                case 13: return [2 /*return*/];
                             }
                         });
                     };

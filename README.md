@@ -7,8 +7,8 @@
   <p>
     <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-14-black?style=flat&logo=next.js" alt="Next.js" /></a>
     <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/Playwright-Browser_Automation-2EAD33?style=flat&logo=playwright" alt="Playwright" /></a>
-    <a href="https://ai.meta.com/llama/"><img src="https://img.shields.io/badge/Powered_by-LLaMA_3.3_70B-blue?style=flat&logo=meta" alt="LLaMA 3.3" /></a>
-    <a href="https://deepmind.google/technologies/gemini/"><img src="https://img.shields.io/badge/Multimodal-Gemini_Pro-orange?style=flat&logo=google" alt="Gemini" /></a>
+    <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/Playwright-Browser_Automation-2EAD33?style=flat&logo=playwright" alt="Playwright" /></a>
+    <a href="https://deepmind.google/technologies/gemini/"><img src="https://img.shields.io/badge/Powered_by-Gemini_2.0_Flash-orange?style=flat&logo=google" alt="Gemini" /></a>
   </p>
 </div>
 
@@ -39,33 +39,34 @@
 
 ## 🏗️ System Architecture
 
-UX-Ray operates on a continuous, multi-modal autonomous loop.
+UX-Ray operates on a continuous, multi-modal autonomous loop using **Set-of-Mark Visual Prompting**.
 
 ```mermaid
 graph TD
     A[Start Session] --> B[Playwright Launches Sandbox]
     
-    subgraph Autonomous Agent Loop
-        B --> C[Extract Spatial DOM & Page State]
-        C --> D{Is Page Loading?}
-        D -- Yes --> E[Smart Auto-Wait]
-        E --> C
-        D -- No --> F[Llama 3.3 70b Decision Engine]
+    subgraph Autonomous Vision Agent Loop
+        B --> C[Extract DOM & Inject Bounding Boxes]
+        C --> D[Capture Annotated Screenshot]
+        D --> E{Is Page Loading?}
+        E -- Yes --> F[Smart Auto-Wait]
+        F --> C
+        E -- No --> G[Gemini 2.0 Multimodal Reasoning]
         
-        F --> G[Infer Next Optimal Action]
-        G --> H[Playwright Executor: Click/Type/Scroll]
-        H --> I[Capture Screenshot & Save Event]
-        I --> C
+        G --> H[Infer Next Optimal Target ID]
+        H --> I[Playwright Executor: Click/Type/Scroll]
+        I --> J[Save Annotated Screenshot to Timeline]
+        J --> C
     end
     
-    I -. Session Complete .-> J[Gemini Multimodal UX Audit]
-    J --> K[Generate Actionable UI Checklist]
+    J -. Session Complete .-> K[Gemini Multimodal UX Audit]
+    K --> L[Generate Actionable UI Checklist]
 ```
 
 ### AI Pipeline Details
-1. **App Recognition (LLaMA-3.3):** Upon landing, it identifies your app type (e.g., SaaS, Developer Tool) to adopt the correct testing persona.
-2. **Autonomous Navigation:** The agent continuously pulls the live DOM state and chooses the single best next action, keeping track of its history to prevent interaction loops.
-3. **Actionable UX Audit:** Uses the captured screenshots and exact timelines to write a highly technical, bias-free UI/UX report.
+1. **Set-of-Mark Annotation:** Before making a decision, the headless browser dynamically injects red numeric bounding boxes over every interactable element on the screen.
+2. **Visual Autonomous Navigation:** The agent streams the live, annotated screenshot directly to **Gemini 2.0 Flash**. The AI uses spatial reasoning to "look" at the screen, read the popups, and output the ID of the exact bounding box it wants to interact with.
+3. **Actionable UX Audit:** Uses the captured visual timeline to write a highly technical, bias-free UI/UX report.
 
 ---
 
@@ -75,9 +76,9 @@ graph TD
 | :--- | :--- | :--- |
 | **Framework** | **Next.js 14** | App Router, API Routes for SSE streaming |
 | **Database** | **PostgreSQL** | Managed via Prisma ORM for session/event storage |
-| **Automation** | **Playwright** | Headless browser execution and DOM spatial extraction |
-| **Reasoning** | **NVIDIA Llama 3.3 70b**| Powers the deep agentic navigation and decision logic |
-| **Vision** | **Google Gemini Pro**| Multimodal visual analysis for the final UX Audit report |
+| **Automation** | **Playwright** | Headless browser execution and visual DOM annotation |
+| **Reasoning** | **Gemini 2.0 Flash**| Powers the deep visual navigation and decision logic |
+| **Reporting** | **Gemini Pro**| Multimodal visual analysis for the final UX Audit report |
 | **Styling** | **Tailwind CSS** | Custom highly-polished developer interface |
 
 ---
@@ -90,8 +91,7 @@ Create a `.env` file in the root directory.
 | :--- | :---: | :--- |
 | `DATABASE_URL` | Yes | Connection string for your PostgreSQL database (e.g., Supabase) |
 | `DIRECT_URL` | Yes | Direct connection string for Prisma migrations |
-| `NVIDIA_API_KEY` | Yes | API key from NVIDIA for Llama 3.3 inference |
-| `GEMINI_API_KEY` | Yes | API key from Google AI Studio for visual UX reporting |
+| `GEMINI_API_KEY` | Yes | API key from Google AI Studio for visual reasoning and reporting |
 
 ---
 

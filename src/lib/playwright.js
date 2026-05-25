@@ -86,7 +86,7 @@ var BrowserSimulator = /** @class */ (function () {
                     case 0:
                         if (!this.page)
                             throw new Error("Browser not initialized.");
-                        return [4 /*yield*/, this.page.goto(url, { waitUntil: "networkidle", timeout: 25000 })];
+                        return [4 /*yield*/, this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 }).catch(function () { })];
                     case 1:
                         _a.sent();
                         return [2 /*return*/];
@@ -99,6 +99,81 @@ var BrowserSimulator = /** @class */ (function () {
             var _a;
             return __generator(this, function (_b) {
                 return [2 /*return*/, ((_a = this.page) === null || _a === void 0 ? void 0 : _a.url()) || ""];
+            });
+        });
+    };
+    // ── Multimodal Set-of-Mark Annotation ────────────────────────────────────
+    BrowserSimulator.prototype.getAnnotatedScreenshot = function () {
+        return __awaiter(this, void 0, void 0, function () {
+            var buffer;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        if (!this.page)
+                            throw new Error("Browser not initialized.");
+                        // 1. Inject bounding boxes based on data-uxray-id
+                        return [4 /*yield*/, this.page.evaluate(function () {
+                                var container = document.createElement('div');
+                                container.id = 'uxray-som-container';
+                                container.style.position = 'fixed';
+                                container.style.top = '0';
+                                container.style.left = '0';
+                                container.style.width = '100vw';
+                                container.style.height = '100vh';
+                                container.style.pointerEvents = 'none';
+                                container.style.zIndex = '999999999';
+                                document.querySelectorAll('[data-uxray-id]').forEach(function (el) {
+                                    var id = el.getAttribute('data-uxray-id');
+                                    if (!id)
+                                        return;
+                                    var rect = el.getBoundingClientRect();
+                                    if (rect.width === 0 || rect.height === 0)
+                                        return;
+                                    // Draw the label
+                                    var label = document.createElement('div');
+                                    label.textContent = id;
+                                    label.style.position = 'absolute';
+                                    label.style.top = Math.max(0, rect.top) + 'px';
+                                    label.style.left = Math.max(0, rect.left) + 'px';
+                                    label.style.backgroundColor = 'rgba(255, 0, 0, 0.8)';
+                                    label.style.color = 'white';
+                                    label.style.fontSize = '12px';
+                                    label.style.fontWeight = 'bold';
+                                    label.style.padding = '2px 4px';
+                                    label.style.borderRadius = '2px';
+                                    label.style.border = '1px solid white';
+                                    label.style.boxShadow = '0 0 2px black';
+                                    // Draw the border box
+                                    var box = document.createElement('div');
+                                    box.style.position = 'absolute';
+                                    box.style.top = rect.top + 'px';
+                                    box.style.left = rect.left + 'px';
+                                    box.style.width = rect.width + 'px';
+                                    box.style.height = rect.height + 'px';
+                                    box.style.border = '2px solid rgba(255, 0, 0, 0.5)';
+                                    box.style.boxSizing = 'border-box';
+                                    container.appendChild(box);
+                                    container.appendChild(label);
+                                });
+                                document.body.appendChild(container);
+                            })];
+                    case 1:
+                        // 1. Inject bounding boxes based on data-uxray-id
+                        _a.sent();
+                        return [4 /*yield*/, this.page.screenshot({ type: "jpeg", quality: 70 })];
+                    case 2:
+                        buffer = _a.sent();
+                        // 3. Remove the annotations
+                        return [4 /*yield*/, this.page.evaluate(function () {
+                                var container = document.getElementById('uxray-som-container');
+                                if (container)
+                                    container.remove();
+                            })];
+                    case 3:
+                        // 3. Remove the annotations
+                        _a.sent();
+                        return [2 /*return*/, buffer.toString('base64')];
+                }
             });
         });
     };
@@ -246,6 +321,7 @@ var BrowserSimulator = /** @class */ (function () {
                                         ? "[IFRAME] ".concat(el.getAttribute("title") || "Embedded")
                                         : el.innerText || el.value || el.textContent || "";
                                     var text = rawText.trim().slice(0, 60);
+                                    var rect = el.getBoundingClientRect();
                                     list.push({
                                         id: currentId++,
                                         tag: el.tagName.toLowerCase(),
@@ -254,6 +330,11 @@ var BrowserSimulator = /** @class */ (function () {
                                         placeholder: el.getAttribute("placeholder") || undefined,
                                         name: el.getAttribute("name") || el.id || undefined,
                                         role: el.getAttribute("role") || undefined,
+                                        ariaLabel: el.getAttribute("aria-label") || undefined,
+                                        disabled: el.disabled || el.getAttribute("aria-disabled") === "true",
+                                        href: el.getAttribute("href") || undefined,
+                                        width: Math.round(rect.width),
+                                        height: Math.round(rect.height),
                                     });
                                 });
                                 return list;
@@ -382,6 +463,35 @@ var BrowserSimulator = /** @class */ (function () {
             });
         });
     };
+    BrowserSimulator.prototype.waitForLoaders = function () {
+        return __awaiter(this, arguments, void 0, function (maxSeconds) {
+            var elapsed, state;
+            if (maxSeconds === void 0) { maxSeconds = 15; }
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        if (!this.page)
+                            return [2 /*return*/];
+                        elapsed = 0;
+                        _a.label = 1;
+                    case 1:
+                        if (!(elapsed < maxSeconds)) return [3 /*break*/, 6];
+                        return [4 /*yield*/, this.getPageState()];
+                    case 2:
+                        state = _a.sent();
+                        if (!(!state.isLoaded || state.hasLoader)) return [3 /*break*/, 4];
+                        return [4 /*yield*/, this.page.waitForTimeout(1000)];
+                    case 3:
+                        _a.sent();
+                        elapsed++;
+                        return [3 /*break*/, 5];
+                    case 4: return [3 /*break*/, 6];
+                    case 5: return [3 /*break*/, 1];
+                    case 6: return [2 /*return*/];
+                }
+            });
+        });
+    };
     BrowserSimulator.prototype.click = function (id) {
         return __awaiter(this, void 0, void 0, function () {
             var coords;
@@ -399,8 +509,11 @@ var BrowserSimulator = /** @class */ (function () {
                         return [4 /*yield*/, this.page.mouse.click(coords.x, coords.y)];
                     case 2:
                         _b.sent();
-                        return [4 /*yield*/, this.page.waitForTimeout(1500)];
+                        return [4 /*yield*/, this.waitForLoaders()];
                     case 3:
+                        _b.sent();
+                        return [4 /*yield*/, this.page.waitForTimeout(800)];
+                    case 4:
                         _b.sent();
                         return [2 /*return*/, ((_a = this.elementsMap.get(id)) === null || _a === void 0 ? void 0 : _a.text) || "element clicked"];
                 }
@@ -410,42 +523,44 @@ var BrowserSimulator = /** @class */ (function () {
     BrowserSimulator.prototype.type = function (id, text) {
         return __awaiter(this, void 0, void 0, function () {
             var coords;
-            var _a;
-            return __generator(this, function (_b) {
-                switch (_b.label) {
+            return __generator(this, function (_a) {
+                switch (_a.label) {
                     case 0:
                         if (!this.page)
                             throw new Error("Browser not initialized.");
                         return [4 /*yield*/, this.getFreshCoords(id)];
                     case 1:
-                        coords = _b.sent();
+                        coords = _a.sent();
                         if (!coords)
                             throw new Error("Element ".concat(id, " not found."));
                         return [4 /*yield*/, this.page.mouse.click(coords.x, coords.y)];
                     case 2:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.waitForTimeout(150)];
                     case 3:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.down("ControlOrMeta")];
                     case 4:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.press("a")];
                     case 5:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.up("ControlOrMeta")];
                     case 6:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.press("Backspace")];
                     case 7:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.type(text, { delay: 40 })];
                     case 8:
-                        _b.sent();
-                        return [4 /*yield*/, this.page.waitForTimeout(500)];
+                        _a.sent();
+                        return [4 /*yield*/, this.waitForLoaders()];
                     case 9:
-                        _b.sent();
-                        return [2 /*return*/, "".concat(((_a = this.elementsMap.get(id)) === null || _a === void 0 ? void 0 : _a.text) || "input", " \u2190 \"").concat(text, "\"")];
+                        _a.sent();
+                        return [4 /*yield*/, this.page.waitForTimeout(500)];
+                    case 10:
+                        _a.sent();
+                        return [2 /*return*/, text];
                 }
             });
         });
@@ -454,42 +569,44 @@ var BrowserSimulator = /** @class */ (function () {
     BrowserSimulator.prototype.typeOnly = function (id, text) {
         return __awaiter(this, void 0, void 0, function () {
             var coords;
-            var _a;
-            return __generator(this, function (_b) {
-                switch (_b.label) {
+            return __generator(this, function (_a) {
+                switch (_a.label) {
                     case 0:
                         if (!this.page)
                             throw new Error("Browser not initialized.");
                         return [4 /*yield*/, this.getFreshCoords(id)];
                     case 1:
-                        coords = _b.sent();
+                        coords = _a.sent();
                         if (!coords)
                             throw new Error("Element ".concat(id, " not found."));
                         return [4 /*yield*/, this.page.mouse.click(coords.x, coords.y)];
                     case 2:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.waitForTimeout(150)];
                     case 3:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.down("ControlOrMeta")];
                     case 4:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.press("a")];
                     case 5:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.up("ControlOrMeta")];
                     case 6:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.press("Backspace")];
                     case 7:
-                        _b.sent();
+                        _a.sent();
                         return [4 /*yield*/, this.page.keyboard.type(text, { delay: 40 })];
                     case 8:
-                        _b.sent();
-                        return [4 /*yield*/, this.page.waitForTimeout(300)];
+                        _a.sent();
+                        return [4 /*yield*/, this.waitForLoaders()];
                     case 9:
-                        _b.sent();
-                        return [2 /*return*/, "".concat(((_a = this.elementsMap.get(id)) === null || _a === void 0 ? void 0 : _a.text) || "input", " \u2190 \"").concat(text, "\"")];
+                        _a.sent();
+                        return [4 /*yield*/, this.page.waitForTimeout(300)];
+                    case 10:
+                        _a.sent();
+                        return [2 /*return*/, text];
                 }
             });
         });
@@ -501,7 +618,7 @@ var BrowserSimulator = /** @class */ (function () {
                     case 0:
                         if (!this.page)
                             throw new Error("Browser not initialized.");
-                        return [4 /*yield*/, this.page.evaluate(function () { return window.scrollBy({ top: 350, behavior: "smooth" }); })];
+                        return [4 /*yield*/, this.page.evaluate(function () { return window.scrollBy({ top: window.innerHeight * 0.8, behavior: "smooth" }); })];
                     case 1:
                         _a.sent();
                         return [4 /*yield*/, this.page.waitForTimeout(800)];

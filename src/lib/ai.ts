@@ -150,19 +150,26 @@ async function callNvidia(system: string, user: string, maxTokens = 700): Promis
 
 // ── Gemini multimodal (screenshots only, for UX report) ──────────────────────
 
-async function callGeminiMultimodal(parts: any[], system: string): Promise<string> {
+async function callGeminiMultimodal(parts: any[], system: string, retries = 3): Promise<string> {
   if (!GEMINI_KEY) throw new Error("no GEMINI_API_KEY");
-  for (const model of ["gemini-2.0-flash", "gemini-1.5-flash"]) {
-    try {
-      const m = ai.getGenerativeModel({ model, systemInstruction: system, generationConfig: { responseMimeType: "application/json" } });
-      const r = await m.generateContent(parts);
-      const text = r.response.text()?.trim();
-      if (text) return text;
-    } catch (e: any) {
-      console.warn(`[Gemini] ${model}: ${e?.status || e?.message?.slice(0, 40)}`);
+  let lastError: any = null;
+  for (let i = 0; i < retries; i++) {
+    for (const model of ["gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"]) {
+      try {
+        const m = ai.getGenerativeModel({ model, systemInstruction: system, generationConfig: { responseMimeType: "application/json" } });
+        const r = await m.generateContent(parts);
+        const text = r.response.text()?.trim();
+        if (text) return text;
+      } catch (e: any) {
+        lastError = e;
+        console.warn(`[Gemini] ${model}: ${e?.status || e?.message?.slice(0, 40)}`);
+        if (e?.status === 429 || e?.message?.includes('429')) {
+          await new Promise(res => setTimeout(res, 2000));
+        }
+      }
     }
   }
-  throw new Error("Gemini unavailable");
+  throw lastError || new Error("Gemini unavailable");
 }
 
 // ── 1. App Recognizer ─────────────────────────────────────────────────────────
