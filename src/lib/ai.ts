@@ -167,8 +167,8 @@ async function callGeminiMultimodal(parts: any[], system: string): Promise<strin
 
 // ── 1. App Recognizer ─────────────────────────────────────────────────────────
 
-export async function recognizeApp(params: { url: string; description: string; pageText: string }): Promise<AppProfile> {
-  const { url, description, pageText } = params;
+export async function recognizeApp(params: { url: string; description: string; pageText: string; userObjective?: string }): Promise<AppProfile> {
+  const { url, description, pageText, userObjective } = params;
 
   const system = `You are a senior UX researcher. Analyze this web app and return ONLY JSON:
 {
@@ -182,7 +182,7 @@ export async function recognizeApp(params: { url: string; description: string; p
   "navigationPages": ["<page 1>","<page 2>","<all pages in nav>"]
 }`;
 
-  const user = `URL: ${url}\nDescription: ${description}\n\nLive page content:\n${pageText}`;
+  const user = `URL: ${url}\nDescription: ${description}\nUSER OBJECTIVE (THEIR GOAL): ${userObjective || 'Explore the app'}\n\nLive page content:\n${pageText}`;
 
   try {
     return JSON.parse(extractJSON(await callNvidia(system, user, 500))) as AppProfile;
@@ -210,8 +210,9 @@ export async function getAgentDecision(params: {
   visitedUrls: string[];
   typedElementIds?: number[];
   credentials?: { username?: string; password?: string };
+  userObjective?: string;
 }): Promise<{ thought: string; action: QueueItem }> {
-  const { scan, appProfile, history, visitedUrls, credentials } = params;
+  const { scan, appProfile, history, visitedUrls, credentials, userObjective } = params;
 
   const formsText = scan.forms.length > 0
     ? scan.forms.map((f, i) => `Form ${i + 1} (${f.purpose}): inputs=${JSON.stringify(f.inputIds)}, submit=${f.submitId}`).join("\n")
@@ -231,6 +232,8 @@ You observe the screen, think about what needs testing, and take ONE ACTION at a
 
 App: ${appProfile.appType} | Audience: ${appProfile.audiencePersona}
 Goal: ${appProfile.primaryGoal}
+USER OBJECTIVE: ${userObjective || 'Generic testing'}
+TESTING PLAN: ${appProfile.testingPlan}
 ${credentials ? `\nPROVIDED CREDENTIALS (YOU MUST USE THESE WHEN TYPING): Username/Email: "${credentials.username || ''}" | Password: "${credentials.password || ''}"` : ""}
 
 CURRENT PAGE: ${scan.currentUrl}
@@ -258,12 +261,13 @@ Visited URLs: ${visitedUrls.join(", ") || "none"}
 ALGORITHMIC QA EXPLORATION RULES:
 1. SPATIAL AWARENESS: Use the width (w) and height (h) to deduce visual hierarchy. Large buttons are primary CTAs. Small elements are secondary/tertiary. Focus on testing primary CTAs first.
 2. SEMANTIC AWARENESS: Do not click disabled elements. If an element has an href to a page you've already visited, avoid it unless necessary.
-3. EDGE CASE TESTING: Try to break the UI. Submit forms with edge-case data, or click primary CTAs to see what happens.
-4. STRICT SEQUENCE: If you just filled a form input (type action), your very next action MUST be to click the corresponding submit button or CTA. Do NOT type another value into the same input.
-5. WAIT PATIENCE: If you just clicked a submit button or CTA, your next action MUST be "wait" to let the backend process and the UI update.
-6. STRICT ANTI-LOOP: You MUST NOT repeat an action on the same element you see in your RECENT HISTORY. If you find yourself doing the same thing, choose "navigate" (click a nav link) or return "done".
-7. SCROLLING: You only see elements in the current viewport. If you are exploring the page or looking for more features, you MUST use the "scroll" action to move down and reveal new elements.
-8. Return ONLY JSON.
+3. OBJECTIVE FOCUS: Evaluate every visible element. Choose the action that most directly advances your USER OBJECTIVE and TESTING PLAN. Do not click random links that distract from the goal!
+4. EDGE CASE TESTING: Try to break the UI. Submit forms with edge-case data, or click primary CTAs to see what happens.
+5. STRICT SEQUENCE: If you just filled a form input (type action), your very next action MUST be to click the corresponding submit button or CTA. Do NOT type another value into the same input.
+6. WAIT PATIENCE: If you just clicked a submit button or CTA, your next action MUST be "wait" to let the backend process and the UI update.
+7. STRICT ANTI-LOOP: You MUST NOT repeat an action on the same element you see in your RECENT HISTORY. If you find yourself doing the same thing, choose "navigate" (click a nav link) or return "done".
+8. SCROLLING: You only see elements in the current viewport. If you are exploring the page or looking for more features, you MUST use the "scroll" action to move down and reveal new elements.
+9. Return ONLY JSON.
 
 Return format:
 {
@@ -306,7 +310,7 @@ export async function generateUXReport(params: {
   timeline: Array<{ timestamp: number; action: string; target?: string; reasoning?: string }>;
   screenshots: Array<{ timestamp: number; base64: string }>;
 }): Promise<UXReport> {
-  const { url, description, appProfile, timeline, screenshots } = params;
+  const { url, description, prompt, appProfile, timeline, screenshots } = params;
 
   const timelineText = timeline.slice(0, 15).map(t =>
     `[${t.timestamp}s] ${t.action}: ${(t.target || "").slice(0, 60)}`
@@ -319,10 +323,11 @@ export async function generateUXReport(params: {
   const system = `You are a Senior UX/UI Engineer and accessibility expert analyzing a startup's web application. You are evaluating the app against Nielsen's 10 Usability Heuristics and modern design standards (WCAG, visual hierarchy, spacing).
 
 ${appCtx} | URL: ${url}
+USER OBJECTIVE FOR THIS TEST: ${prompt || 'General UX Evaluation'}
 
-IMPORTANT: Filter out any bot automation noise (e.g. if the bot clicked the wrong element). Focus STRICTLY on the actual UI/UX of the product shown in the screenshots and the structure of the timeline.
+IMPORTANT: Filter out any bot automation noise (e.g. if the bot clicked the wrong element). Focus STRICTLY on whether the UI/UX successfully served the USER OBJECTIVE.
 
-Your job is to provide HIGHLY ACTIONABLE, developer-ready feedback. Do not give generic advice like "make it look better" or "improve instructions".
+Your job is to provide HIGHLY ACTIONABLE, developer-ready feedback tailored to this objective. Do not give generic advice like "make it look better" or "improve instructions".
 Instead, provide exact, technical UI/UX fixes:
 - "Increase the contrast ratio of the secondary button in the header from #555 to #333 for accessibility."
 - "Add a 24px margin-bottom to the form groups to improve visual separation."

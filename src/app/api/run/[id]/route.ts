@@ -52,7 +52,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         ]);
 
         send("log", { message: "App Recognizer building mental model of your product..." });
-        appProfile = await recognizeApp({ url: session.url, description: session.description, pageText: pageText0 });
+        appProfile = await recognizeApp({ url: session.url, description: session.description, pageText: pageText0, userObjective: session.prompt || undefined });
 
         send("log", { message: `✓ Identified: ${appProfile.appType}` });
         send("log", { message: `✓ Audience: ${appProfile.audiencePersona}` });
@@ -110,6 +110,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
               visitedUrls,
               typedElementIds: Array.from(typedElementIds),
               credentials: credentials || undefined,
+              userObjective: session.prompt || undefined,
             });
 
             if (decision.thought) {
