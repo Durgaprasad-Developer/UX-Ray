@@ -91,7 +91,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
           }
 
           let decision: { observation?: string; thought: string; action: QueueItem } | null = null;
-
+          let annotatedScreenshot = "";
           let scan: import("@/lib/playwright").PageScan | null = null;
           try {
             scan = await simulator.getPageScan();
@@ -103,6 +103,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
             send("log", { message: `🧠 Thinking...` });
 
+            annotatedScreenshot = await simulator.getAnnotatedScreenshot();
+
             decision = await getAgentDecision({
               scan,
               appProfile: appProfile!,
@@ -111,6 +113,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
               typedElementIds: Array.from(typedElementIds),
               credentials: credentials || undefined,
               userObjective: session.prompt || undefined,
+              annotatedScreenshot,
             });
 
             if (decision.observation) {
@@ -189,7 +192,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
             targetText = `[${elInfo || "unknown"}] (element not found or intractable)`;
           }
 
-          const screenshot = await simulator.screenshotBase64();
+          // We use the annotatedScreenshot taken right before the action so users can see the AI's visual reasoning
+          const screenshot = annotatedScreenshot;
           const offsetSeconds = Math.round((Date.now() - startTime) / 1000);
           const purpose = (item as any).purpose || decision!.thought;
 
@@ -200,7 +204,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
               action: actionName,
               target: targetText || purpose,
               reasoning: purpose,
-              screenshotUrl: `data:image/png;base64,${screenshot}`,
+              screenshotUrl: `data:image/jpeg;base64,${screenshot}`,
             },
           });
 

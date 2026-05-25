@@ -30,7 +30,9 @@ async function main() {
     console.log(`Scan: ${scan.elements.length} elements, ${scan.forms.length} forms, ${scan.tabGroups.length} tabs`);
 
     try {
-      const decision = await getAgentDecision({ scan, appProfile, history, visitedUrls });
+      const annotatedScreenshot = await simulator.getAnnotatedScreenshot();
+      const decision = await getAgentDecision({ scan, appProfile, history, visitedUrls, annotatedScreenshot });
+      console.log(`👀 OBSERVATION: ${decision.observation}`);
       console.log(`💡 THOUGHT: ${decision.thought}`);
       const action = decision.action;
       console.log(`🏃 ACTION:`, action);

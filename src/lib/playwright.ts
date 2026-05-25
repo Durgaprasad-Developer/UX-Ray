@@ -50,6 +50,73 @@ export class BrowserSimulator {
     return this.page?.url() || "";
   }
 
+  // ── Multimodal Set-of-Mark Annotation ────────────────────────────────────
+  
+  async getAnnotatedScreenshot(): Promise<string> {
+    if (!this.page) throw new Error("Browser not initialized.");
+    
+    // 1. Inject bounding boxes based on data-uxray-id
+    await this.page.evaluate(() => {
+      const container = document.createElement('div');
+      container.id = 'uxray-som-container';
+      container.style.position = 'fixed';
+      container.style.top = '0';
+      container.style.left = '0';
+      container.style.width = '100vw';
+      container.style.height = '100vh';
+      container.style.pointerEvents = 'none';
+      container.style.zIndex = '999999999';
+      
+      document.querySelectorAll('[data-uxray-id]').forEach(el => {
+        const id = el.getAttribute('data-uxray-id');
+        if (!id) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return;
+        
+        // Draw the label
+        const label = document.createElement('div');
+        label.textContent = id;
+        label.style.position = 'absolute';
+        label.style.top = Math.max(0, rect.top) + 'px';
+        label.style.left = Math.max(0, rect.left) + 'px';
+        label.style.backgroundColor = 'rgba(255, 0, 0, 0.8)';
+        label.style.color = 'white';
+        label.style.fontSize = '12px';
+        label.style.fontWeight = 'bold';
+        label.style.padding = '2px 4px';
+        label.style.borderRadius = '2px';
+        label.style.border = '1px solid white';
+        label.style.boxShadow = '0 0 2px black';
+        
+        // Draw the border box
+        const box = document.createElement('div');
+        box.style.position = 'absolute';
+        box.style.top = rect.top + 'px';
+        box.style.left = rect.left + 'px';
+        box.style.width = rect.width + 'px';
+        box.style.height = rect.height + 'px';
+        box.style.border = '2px solid rgba(255, 0, 0, 0.5)';
+        box.style.boxSizing = 'border-box';
+        
+        container.appendChild(box);
+        container.appendChild(label);
+      });
+      
+      document.body.appendChild(container);
+    });
+    
+    // 2. Take the screenshot
+    const buffer = await this.page.screenshot({ type: "jpeg", quality: 70 });
+    
+    // 3. Remove the annotations
+    await this.page.evaluate(() => {
+      const container = document.getElementById('uxray-som-container');
+      if (container) container.remove();
+    });
+    
+    return buffer.toString('base64');
+  }
+
   // ── Core: Full page scan for queue-based planning ─────────────────────────
 
   async getPageScan(): Promise<PageScan> {

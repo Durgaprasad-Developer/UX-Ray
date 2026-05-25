@@ -211,8 +211,9 @@ export async function getAgentDecision(params: {
   typedElementIds?: number[];
   credentials?: { username?: string; password?: string };
   userObjective?: string;
+  annotatedScreenshot: string;
 }): Promise<{ observation: string; thought: string; action: QueueItem }> {
-  const { scan, appProfile, history, visitedUrls, credentials, userObjective } = params;
+  const { scan, appProfile, history, visitedUrls, credentials, userObjective, annotatedScreenshot } = params;
 
   const formsText = scan.forms.length > 0
     ? scan.forms.map((f, i) => `Form ${i + 1} (${f.purpose}): inputs=${JSON.stringify(f.inputIds)}, submit=${f.submitId}`).join("\n")
@@ -227,8 +228,9 @@ export async function getAgentDecision(params: {
   const typedIds = params.typedElementIds || [];
   const elements = scan.elements.filter(e => !typedIds.includes(e.id)).slice(0, 50);
 
-  const system = `You are an autonomous AI QA Agent testing a web app. You act exactly like a meticulous senior developer doing a deep-dive QA session.
-You observe the screen, think about what needs testing, and take ONE ACTION at a time.
+  const system = `You are an autonomous AI Vision Agent testing a web app. You act exactly like a meticulous senior developer doing a deep-dive QA session.
+You have been provided with an annotated screenshot of the current page. Every interactable element is overlaid with a red numeric bounding box (e.g. [14], [45]).
+You observe the screen visually, cross-reference the bounding box IDs with the text list below, think about what needs testing, and take ONE ACTION at a time by outputting the ID of the box you wish to interact with.
 
 App: ${appProfile.appType} | Audience: ${appProfile.audiencePersona}
 Goal: ${appProfile.primaryGoal}
@@ -242,14 +244,11 @@ ${scan.pageText.slice(0, 400)}
 PAGE STRUCTURE:
 ${formsText}
 ${tabsText}
-All visible interactable elements (id, tag, text, spatial & semantic data):
+Interactable Elements mapping (cross-reference these IDs with the red boxes on the image):
 ${JSON.stringify(elements.map(e => ({
   id: e.id, 
   tag: e.tag, 
   t: e.text?.slice(0,40) || e.placeholder?.slice(0,40) || e.ariaLabel?.slice(0,20),
-  w: e.width,
-  h: e.height,
-  href: e.href?.slice(0,30),
   disabled: e.disabled ? true : undefined
 })))}
 
@@ -259,25 +258,29 @@ ${historyText}
 Visited URLs: ${visitedUrls.join(", ") || "none"}
 
 DYNAMIC SITUATIONAL REASONING:
-You must dynamically adapt to the situation instead of following static robotic rules:
-- DYNAMIC ADAPTATION: If your last action failed or didn't change the page, do NOT repeat it. Think about why it failed and adapt your strategy.
-- POPUPS & OVERLAYS: If a cookie banner, newsletter, or modal blocks the screen, you must immediately dismiss or interact with it before doing anything else.
-- INTELLIGENT EXPLORATION: Use the "scroll" action if you need to find more content. Use spatial data (w, h) to deduce which buttons are important primary CTAs.
-- OBJECTIVE FOCUS: Above all, every action you take must actively and intelligently advance the USER OBJECTIVE and TESTING PLAN. Do not click random links that distract from the main goal.
+You must dynamically adapt to the situation visually instead of following static robotic rules:
+- DYNAMIC ADAPTATION: If your last action failed or didn't change the page, do NOT repeat it. Look at the image, think about why it failed, and adapt your strategy.
+- POPUPS & OVERLAYS: If you visually see a cookie banner, newsletter, or modal blocking the screen, you must immediately dismiss or interact with it before doing anything else.
+- INTELLIGENT EXPLORATION: Use the "scroll" action if you need to find more content. Use your visual intuition to decide which buttons are primary CTAs.
+- OBJECTIVE FOCUS: Above all, every action you take must actively and intelligently advance the USER OBJECTIVE and TESTING PLAN.
 - Return ONLY JSON.
 
 Return format:
 {
-  "observation": "<What do you see right now? Did your last action succeed? Is there a popup blocking the screen?>",
-  "thought": "<Based on your observation, what is your 1-sentence strategy?>",
-  "action": { "type": "type"|"click"|"wait"|"scroll"|"done", "elementId": <number>, "value": "<if type>", "purpose": "<short label>" }
+  "observation": "<What do you see on the screenshot right now? Did your last action succeed? Is there a popup blocking the screen?>",
+  "thought": "<Based on your visual observation, what is your 1-sentence strategy?>",
+  "action": { "type": "type"|"click"|"wait"|"scroll"|"done", "elementId": <number_from_red_box>, "value": "<if type>", "purpose": "<short label>" }
 }
 For "done", action should be: { "type": "done", "summary": "<reason>" }`;
 
-  const user = "Observe the state and history. Write your observation and thought. Decide the single best next action. Return JSON.";
+  const user = "Observe the annotated screenshot and history. Write your visual observation and thought. Decide the single best next action by choosing a numeric ID. Return JSON.";
 
   try {
-    const text = await callNvidia(system, user, 600);
+    const parts = [
+      { text: user },
+      { inlineData: { mimeType: "image/jpeg", data: annotatedScreenshot } }
+    ];
+    const text = await callGeminiMultimodal(parts, system);
     const result = JSON.parse(extractJSON(text));
     if (!result.action || !result.action.type) throw new Error("invalid schema");
     
