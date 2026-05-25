@@ -258,17 +258,13 @@ ${historyText}
 
 Visited URLs: ${visitedUrls.join(", ") || "none"}
 
-ALGORITHMIC QA EXPLORATION RULES:
-1. POPUP HANDLING (CRITICAL): If you see a cookie banner, newsletter popup, or blocking modal, your ABSOLUTE PRIORITY is to interact with it (Accept, Reject, or Close) before interacting with anything else on the page.
-2. SPATIAL AWARENESS: Use the width (w) and height (h) to deduce visual hierarchy. Large buttons are primary CTAs. Small elements are secondary/tertiary. Focus on testing primary CTAs first.
-3. SEMANTIC AWARENESS: Do not click disabled elements. If an element has an href to a page you've already visited, avoid it unless necessary.
-4. OBJECTIVE FOCUS: Evaluate every visible element. Choose the action that most directly advances your USER OBJECTIVE and TESTING PLAN. Do not click random links that distract from the goal!
-5. EDGE CASE TESTING: Try to break the UI. Submit forms with edge-case data, or click primary CTAs to see what happens.
-6. STRICT SEQUENCE: If you just filled a form input (type action), your very next action MUST be to click the corresponding submit button or CTA. Do NOT type another value into the same input.
-7. WAIT PATIENCE: If you just clicked a submit button or CTA, your next action MUST be "wait" to let the backend process and the UI update.
-8. STRICT ANTI-LOOP: You MUST NOT repeat an action on the same element you see in your RECENT HISTORY. If you find yourself doing the same thing, choose "navigate" (click a nav link) or return "done".
-9. SCROLLING: You only see elements in the current viewport. If you are exploring the page or looking for more features, you MUST use the "scroll" action to move down and reveal new elements.
-10. Return ONLY JSON.
+DYNAMIC SITUATIONAL REASONING:
+You must dynamically adapt to the situation instead of following static robotic rules:
+- DYNAMIC ADAPTATION: If your last action failed or didn't change the page, do NOT repeat it. Think about why it failed and adapt your strategy.
+- POPUPS & OVERLAYS: If a cookie banner, newsletter, or modal blocks the screen, you must immediately dismiss or interact with it before doing anything else.
+- INTELLIGENT EXPLORATION: Use the "scroll" action if you need to find more content. Use spatial data (w, h) to deduce which buttons are important primary CTAs.
+- OBJECTIVE FOCUS: Above all, every action you take must actively and intelligently advance the USER OBJECTIVE and TESTING PLAN. Do not click random links that distract from the main goal.
+- Return ONLY JSON.
 
 Return format:
 {
