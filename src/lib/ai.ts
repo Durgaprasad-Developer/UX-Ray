@@ -211,7 +211,7 @@ export async function getAgentDecision(params: {
   typedElementIds?: number[];
   credentials?: { username?: string; password?: string };
   userObjective?: string;
-}): Promise<{ thought: string; action: QueueItem }> {
+}): Promise<{ observation: string; thought: string; action: QueueItem }> {
   const { scan, appProfile, history, visitedUrls, credentials, userObjective } = params;
 
   const formsText = scan.forms.length > 0
@@ -259,24 +259,26 @@ ${historyText}
 Visited URLs: ${visitedUrls.join(", ") || "none"}
 
 ALGORITHMIC QA EXPLORATION RULES:
-1. SPATIAL AWARENESS: Use the width (w) and height (h) to deduce visual hierarchy. Large buttons are primary CTAs. Small elements are secondary/tertiary. Focus on testing primary CTAs first.
-2. SEMANTIC AWARENESS: Do not click disabled elements. If an element has an href to a page you've already visited, avoid it unless necessary.
-3. OBJECTIVE FOCUS: Evaluate every visible element. Choose the action that most directly advances your USER OBJECTIVE and TESTING PLAN. Do not click random links that distract from the goal!
-4. EDGE CASE TESTING: Try to break the UI. Submit forms with edge-case data, or click primary CTAs to see what happens.
-5. STRICT SEQUENCE: If you just filled a form input (type action), your very next action MUST be to click the corresponding submit button or CTA. Do NOT type another value into the same input.
-6. WAIT PATIENCE: If you just clicked a submit button or CTA, your next action MUST be "wait" to let the backend process and the UI update.
-7. STRICT ANTI-LOOP: You MUST NOT repeat an action on the same element you see in your RECENT HISTORY. If you find yourself doing the same thing, choose "navigate" (click a nav link) or return "done".
-8. SCROLLING: You only see elements in the current viewport. If you are exploring the page or looking for more features, you MUST use the "scroll" action to move down and reveal new elements.
-9. Return ONLY JSON.
+1. POPUP HANDLING (CRITICAL): If you see a cookie banner, newsletter popup, or blocking modal, your ABSOLUTE PRIORITY is to interact with it (Accept, Reject, or Close) before interacting with anything else on the page.
+2. SPATIAL AWARENESS: Use the width (w) and height (h) to deduce visual hierarchy. Large buttons are primary CTAs. Small elements are secondary/tertiary. Focus on testing primary CTAs first.
+3. SEMANTIC AWARENESS: Do not click disabled elements. If an element has an href to a page you've already visited, avoid it unless necessary.
+4. OBJECTIVE FOCUS: Evaluate every visible element. Choose the action that most directly advances your USER OBJECTIVE and TESTING PLAN. Do not click random links that distract from the goal!
+5. EDGE CASE TESTING: Try to break the UI. Submit forms with edge-case data, or click primary CTAs to see what happens.
+6. STRICT SEQUENCE: If you just filled a form input (type action), your very next action MUST be to click the corresponding submit button or CTA. Do NOT type another value into the same input.
+7. WAIT PATIENCE: If you just clicked a submit button or CTA, your next action MUST be "wait" to let the backend process and the UI update.
+8. STRICT ANTI-LOOP: You MUST NOT repeat an action on the same element you see in your RECENT HISTORY. If you find yourself doing the same thing, choose "navigate" (click a nav link) or return "done".
+9. SCROLLING: You only see elements in the current viewport. If you are exploring the page or looking for more features, you MUST use the "scroll" action to move down and reveal new elements.
+10. Return ONLY JSON.
 
 Return format:
 {
-  "thought": "<1 sentence reasoning detailing your QA strategy>",
+  "observation": "<What do you see right now? Did your last action succeed? Is there a popup blocking the screen?>",
+  "thought": "<Based on your observation, what is your 1-sentence strategy?>",
   "action": { "type": "type"|"click"|"wait"|"scroll"|"done", "elementId": <number>, "value": "<if type>", "purpose": "<short label>" }
 }
 For "done", action should be: { "type": "done", "summary": "<reason>" }`;
 
-  const user = "Observe the state and history. Decide the single best next action. Return JSON.";
+  const user = "Observe the state and history. Write your observation and thought. Decide the single best next action. Return JSON.";
 
   try {
     const text = await callNvidia(system, user, 600);
@@ -294,7 +296,7 @@ For "done", action should be: { "type": "done", "summary": "<reason>" }`;
     return result;
   } catch (err) {
     console.warn("[Agent] Failed, returning fallback done:", err);
-    return { thought: "Error communicating with intelligence engine.", action: { type: "done", summary: "API failure" } };
+    return { observation: "System error", thought: "Error communicating with intelligence engine.", action: { type: "done", summary: "API failure" } };
   }
 }
 

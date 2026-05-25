@@ -90,7 +90,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
             typedElementIds.clear();
           }
 
-          let decision: { thought: string; action: QueueItem } | null = null;
+          let decision: { observation?: string; thought: string; action: QueueItem } | null = null;
 
           let scan: import("@/lib/playwright").PageScan | null = null;
           try {
@@ -113,6 +113,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
               userObjective: session.prompt || undefined,
             });
 
+            if (decision.observation) {
+              send("log", { message: `👀 Observation: ${decision.observation}` });
+            }
             if (decision.thought) {
               send("thought", decision.thought);
             }
