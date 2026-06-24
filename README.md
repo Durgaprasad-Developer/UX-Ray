@@ -1,5 +1,5 @@
 ---
-title: UX-Ray AI QA Agent
+title: UX-Ray
 emoji: ⚡
 colorFrom: purple
 colorTo: indigo

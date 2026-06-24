@@ -113,7 +113,7 @@ export default function SessionReplay() {
   useEffect(() => {
     if (status === "completed" || status === "failed") return;
 
-    setLogs(["Connecting to UX-Ray session controller..."]);
+    setLogs(["Connecting to Task Doer session controller..."]);
     const eventSource = new EventSource(`/api/run/${sessionId}`);
 
     eventSource.addEventListener("log", (e: any) => {
@@ -309,7 +309,7 @@ export default function SessionReplay() {
                       <>
                         <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
                         <h3 className="text-sm font-bold text-zinc-300">Launching Isolated Browser</h3>
-                        <p className="text-[11px] leading-relaxed">UX-Ray is initializing the Chromium sandboxed runner to securely load your website structure.</p>
+                        <p className="text-[11px] leading-relaxed">Task Doer is initializing the Chromium sandboxed runner to securely load your website structure.</p>
                       </>
                     )}
                   </div>

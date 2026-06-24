@@ -301,38 +301,43 @@ export class BrowserSimulator {
 
   async getPageState(): Promise<{ isLoaded: boolean; documentState: string; hasLoader: boolean }> {
     if (!this.page) return { isLoaded: true, documentState: "complete", hasLoader: false };
-    return await this.page.evaluate(() => {
-      const docState = document.readyState;
-      const loaderSelectors = [
-        '[class*="spinner"]', '[class*="loader"]', '[class*="loading"]',
-        '[role="progressbar"]', '[aria-busy="true"]',
-        'svg.animate-spin', '[class*="animate-spin"]', '[class*="skeleton"]',
-      ];
-      let hasLoader = false;
-      for (const sel of loaderSelectors) {
-        const el = document.querySelector(sel);
-        if (el) {
-          const s = window.getComputedStyle(el);
-          if (s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0") {
-            hasLoader = true; break;
+    try {
+      return await this.page.evaluate(() => {
+        const docState = document.readyState;
+        const loaderSelectors = [
+          '[class*="spinner"]', '[class*="loader"]', '[class*="loading"]',
+          '[role="progressbar"]', '[aria-busy="true"]',
+          'svg.animate-spin', '[class*="animate-spin"]', '[class*="skeleton"]',
+        ];
+        let hasLoader = false;
+        for (const sel of loaderSelectors) {
+          const el = document.querySelector(sel);
+          if (el) {
+            const s = window.getComputedStyle(el);
+            if (s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0") {
+              hasLoader = true; break;
+            }
           }
         }
-      }
-      if (!hasLoader) {
-        const phrases = ["analyzing","fetching","generating","processing","loading","please wait","scanning"];
-        for (const node of Array.from(document.querySelectorAll("p,span,div,h1,h2,h3"))) {
-          const el = node as HTMLElement;
-          const r = el.getBoundingClientRect();
-          const s = window.getComputedStyle(el);
-          if (r.width > 0 && r.height > 0 && r.top < window.innerHeight && r.bottom > 0 &&
-              s.display !== "none" && s.visibility !== "hidden") {
-            const t = (el.textContent || "").toLowerCase().trim();
-            if (t.length < 120 && phrases.some(p => t.includes(p))) { hasLoader = true; break; }
+        if (!hasLoader) {
+          const phrases = ["analyzing","fetching","generating","processing","loading","please wait","scanning"];
+          for (const node of Array.from(document.querySelectorAll("p,span,div,h1,h2,h3"))) {
+            const el = node as HTMLElement;
+            const r = el.getBoundingClientRect();
+            const s = window.getComputedStyle(el);
+            if (r.width > 0 && r.height > 0 && r.top < window.innerHeight && r.bottom > 0 &&
+                s.display !== "none" && s.visibility !== "hidden") {
+              const t = (el.textContent || "").toLowerCase().trim();
+              if (t.length < 120 && phrases.some(p => t.includes(p))) { hasLoader = true; break; }
+            }
           }
         }
-      }
-      return { isLoaded: docState === "complete" && !hasLoader, documentState: docState, hasLoader };
-    });
+        return { isLoaded: docState === "complete" && !hasLoader, documentState: docState, hasLoader };
+      });
+    } catch (e: any) {
+      console.warn("[Playwright] getPageState suppressed navigation error:", e.message?.slice(0, 80));
+      return { isLoaded: false, documentState: "loading", hasLoader: true };
+    }
   }
 
   // ── Page text extraction ──────────────────────────────────────────────────

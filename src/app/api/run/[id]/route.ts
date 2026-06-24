@@ -51,13 +51,28 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
           simulator.getPageText(),
         ]);
 
-        send("log", { message: "App Recognizer building mental model of your product..." });
-        appProfile = await recognizeApp({ url: session.url, description: session.description, pageText: pageText0, userObjective: session.prompt || undefined });
+        if (session.mode === "task") {
+          appProfile = {
+            appType: "web-application",
+            primaryGoal: session.prompt || "Execute the specified task",
+            expectedUserActions: [],
+            sensitiveFields: [],
+            testingPlan: session.prompt || "Execute the specified task",
+            audiencePersona: "user",
+            requiresAuth: false,
+            navigationPages: []
+          };
+          send("log", { message: "Task Doer Agent initialized." });
+          if (credentials?.username) send("log", { message: "✓ Credentials ready" });
+        } else {
+          send("log", { message: "App Recognizer building mental model of your product..." });
+          appProfile = await recognizeApp({ url: session.url, description: session.description, pageText: pageText0, userObjective: session.prompt || undefined });
 
-        send("log", { message: `✓ Identified: ${appProfile.appType}` });
-        send("log", { message: `✓ Audience: ${appProfile.audiencePersona}` });
-        send("log", { message: `✓ Pages to cover: ${appProfile.navigationPages.join(", ")}` });
-        if (credentials?.username) send("log", { message: "✓ Login credentials ready" });
+          send("log", { message: `✓ Identified: ${appProfile.appType}` });
+          send("log", { message: `✓ Audience: ${appProfile.audiencePersona}` });
+          send("log", { message: `✓ Pages to cover: ${appProfile.navigationPages.join(", ")}` });
+          if (credentials?.username) send("log", { message: "✓ Login credentials ready" });
+        }
 
         await prisma.session.update({ where: { id: sessionId }, data: { appProfile: JSON.stringify(appProfile) } });
 
@@ -114,6 +129,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
               credentials: credentials || undefined,
               userObjective: session.prompt || undefined,
               annotatedScreenshot,
+              mode: session.mode,
             });
 
             if (decision.observation) {
@@ -222,7 +238,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
           data: { status: "completed", completedAt: new Date() },
         });
         send("log", { message: `✓ Session complete — ${totalSteps} interactions across ${pagesVisited} page(s).` });
-        send("complete", { message: "Analysis finished.", mode: "analysis", status: "success" });
+        send("complete", { message: "Task finished.", mode: session.mode, status: "success" });
 
       } catch (err: any) {
         console.error("Fatal session error:", err);

@@ -6,13 +6,16 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
-    const { url, description, prompt, credentials } = await req.json();
+    const { url, description, prompt, credentials, mode } = await req.json();
 
     if (!url) {
       return NextResponse.json({ error: "URL is required." }, { status: 400 });
     }
 
-    if (!description) {
+    const sessionMode = mode || "task";
+    const sessionDesc = description?.trim() || (sessionMode === "task" ? "Task Doer Execution" : "");
+
+    if (!sessionDesc) {
       return NextResponse.json(
         { error: "Please briefly describe what your app does. This helps the AI simulate a realistic user." },
         { status: 400 }
@@ -36,10 +39,10 @@ export async function POST(req: Request) {
     const session = await prisma.session.create({
       data: {
         url: validation.cleanUrl || url,
-        description: description.trim(),
+        description: sessionDesc,
         prompt: prompt?.trim() || null,
         credentials: credentialsJson,
-        mode: "analysis",
+        mode: sessionMode,
         status: "pending",
       },
     });
